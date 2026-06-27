@@ -5,6 +5,21 @@ import { apiService } from "@/lib/api";
 import { motion } from "framer-motion";
 import { BarChart3, Database, Shield, Zap, TrendingUp, DollarSign } from "lucide-react";
 
+const fallbackStats = {
+  total_runs: 0,
+  total_briefs_generated: 0,
+  average_confidence: 0,
+  platform_metrics: {
+    total_duplicates_avoided: 0,
+    total_cost_estimate: 0
+  },
+  hitl_summary: {
+    approved: 0,
+    rejected: 0,
+    pending_research: 0
+  }
+};
+
 export default function AnalyticsPage() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -20,14 +35,14 @@ export default function AnalyticsPage() {
         if (projects && projects.length > 0) {
           const actualProjectId = projects[0].id;
           const res = await apiService.getAnalytics(actualProjectId);
-          setStats(res.data);
+          setStats(res.data || fallbackStats);
         } else {
           // No projects found
-          setStats(null);
+          setStats(fallbackStats);
         }
       } catch (err) {
         console.error("Analytics error:", err);
-        setStats(null);
+        setStats(fallbackStats);
       } finally {
         setLoading(false);
       }
@@ -40,14 +55,7 @@ export default function AnalyticsPage() {
     return <div className="container mt-8 text-center text-muted">Loading analytics...</div>;
   }
 
-  if (!stats) {
-    return (
-      <div className="container mt-8 text-center text-muted">
-        <h3>No Data Available</h3>
-        <p>Run a workflow or create a project to generate analytics.</p>
-      </div>
-    );
-  }
+  const safeStats = stats || fallbackStats;
 
   return (
     <div className="container">
@@ -70,7 +78,7 @@ export default function AnalyticsPage() {
               <span className="text-sm uppercase font-semibold">Total Workflows</span>
               <Zap size={20} color="var(--accent-primary)" />
             </div>
-            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{stats.total_runs}</div>
+            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{safeStats.total_runs}</div>
           </div>
           
           <div className="glass-card" style={{ padding: "24px" }}>
@@ -78,7 +86,7 @@ export default function AnalyticsPage() {
               <span className="text-sm uppercase font-semibold">Briefs Generated</span>
               <Database size={20} color="var(--accent-secondary)" />
             </div>
-            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{stats.total_briefs_generated}</div>
+            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{safeStats.total_briefs_generated}</div>
           </div>
           
           <div className="glass-card" style={{ padding: "24px" }}>
@@ -86,7 +94,7 @@ export default function AnalyticsPage() {
               <span className="text-sm uppercase font-semibold">Avg Confidence</span>
               <TrendingUp size={20} color="var(--accent-success)" />
             </div>
-            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{(stats.average_confidence * 100).toFixed(0)}%</div>
+            <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>{(safeStats.average_confidence * 100).toFixed(0)}%</div>
           </div>
           
           <div className="glass-card" style={{ padding: "24px", border: "1px solid rgba(16, 185, 129, 0.3)" }}>
@@ -95,7 +103,7 @@ export default function AnalyticsPage() {
               <Shield size={20} color="var(--accent-success)" />
             </div>
             <div style={{ fontSize: "2.5rem", fontWeight: 700, color: "var(--accent-success)" }}>
-              {stats.platform_metrics?.total_duplicates_avoided || 0}
+              {safeStats.platform_metrics?.total_duplicates_avoided || 0}
             </div>
             <div className="text-xs text-muted mt-2">Saved via 3-step memory dedup</div>
           </div>
@@ -108,7 +116,7 @@ export default function AnalyticsPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
               <div>
                 <div className="flex-between mb-2">
-                  <span className="text-sm">Approved ({stats.hitl_summary?.approved || 0})</span>
+                  <span className="text-sm">Approved ({safeStats.hitl_summary?.approved || 0})</span>
                   <span className="text-sm font-semibold">84%</span>
                 </div>
                 <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", overflow: "hidden" }}>
@@ -118,7 +126,7 @@ export default function AnalyticsPage() {
               
               <div>
                 <div className="flex-between mb-2">
-                  <span className="text-sm">Rejected ({stats.hitl_summary?.rejected || 0})</span>
+                  <span className="text-sm">Rejected ({safeStats.hitl_summary?.rejected || 0})</span>
                   <span className="text-sm font-semibold">9%</span>
                 </div>
                 <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", overflow: "hidden" }}>
@@ -128,7 +136,7 @@ export default function AnalyticsPage() {
               
               <div>
                 <div className="flex-between mb-2">
-                  <span className="text-sm">Researched ({stats.hitl_summary?.pending_research || 0})</span>
+                  <span className="text-sm">Researched ({safeStats.hitl_summary?.pending_research || 0})</span>
                   <span className="text-sm font-semibold">7%</span>
                 </div>
                 <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", overflow: "hidden" }}>
@@ -148,14 +156,14 @@ export default function AnalyticsPage() {
               <div>
                 <div className="text-muted text-sm uppercase mb-1">Estimated LLM Cost</div>
                 <div style={{ fontSize: "3rem", fontWeight: 700 }}>
-                  ${(stats.platform_metrics?.total_cost_estimate || 0).toFixed(3)}
+                  ${(safeStats.platform_metrics?.total_cost_estimate || 0).toFixed(3)}
                 </div>
               </div>
             </div>
             
             <p className="text-muted text-sm" style={{ lineHeight: 1.6 }}>
               The platform utilizes <strong className="text-white">Gemini 2.0 Flash</strong> for high-speed, low-cost intelligence gathering. 
-              By implementing the Redis + PostgreSQL + ChromaDB deduplication pipeline, we avoided processing {stats.platform_metrics?.total_duplicates_avoided || 0} identical companies, saving approximately ${( (stats.platform_metrics?.total_duplicates_avoided || 0) * 0.002 ).toFixed(3)} in API credits.
+              By implementing the Redis + PostgreSQL + ChromaDB deduplication pipeline, we avoided processing {safeStats.platform_metrics?.total_duplicates_avoided || 0} identical companies, saving approximately ${( (safeStats.platform_metrics?.total_duplicates_avoided || 0) * 0.002 ).toFixed(3)} in API credits.
             </p>
           </div>
         </div>
