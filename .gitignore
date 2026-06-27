@@ -1,0 +1,72 @@
+# ── ENVIRONMENT & SECRETS ─────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── PYTHON ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+*.egg
+pip-wheel-metadata/
+.eggs/
+
+# ── VIRTUAL ENV ───────────────────────────────────────────
+backend/venv/
+backend/.venv/
+
+# ── ALEMBIC ───────────────────────────────────────────────
+# Keep migrations folder but ignore pyc inside
+backend/database/migrations/__pycache__/
+
+# ── CHROMADB (local vector store) ────────────────────────
+backend/chroma_data/
+chroma_data/
+
+# ── NODE / NEXT.JS ────────────────────────────────────────
+node_modules/
+.next/
+out/
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── OS FILES ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ── IDE / EDITORS ─────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.iml
+
+# ── LOGS ──────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+
+# ── TESTING ───────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# ── MISC ──────────────────────────────────────────────────
+*.bak
+hello.txt
