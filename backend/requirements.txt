@@ -1,0 +1,39 @@
+# Pin numpy 2.x first — pre-built win_amd64 wheel for Python 3.13 (no compilation)
+numpy>=2.1.0
+
+# ── Web Framework ─────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.7.3
+pydantic-settings==2.3.4
+python-dotenv==1.0.1
+python-multipart==0.0.9
+websockets>=12.0
+
+# ── Database ──────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+
+# ── Redis ─────────────────────────────────────────────────
+redis[asyncio]==5.0.6
+
+# ── Vector DB ─────────────────────────────────────────────
+# ChromaDB 1.x uses onnxruntime for embeddings (no sentence-transformers needed)
+chromadb>=1.0.0
+
+# ── LLM & Agents ──────────────────────────────────────────
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+
+# ── Search & Data ─────────────────────────────────────────
+tavily-python>=0.3.0
+newsapi-python==0.2.7
+feedparser==6.0.11
+httpx>=0.27.0
+
+# ── Utilities ─────────────────────────────────────────────
+PyYAML>=6.0.0

@@ -1,0 +1,52 @@
+plugins:
+  - id: "search.web_search"
+    module: "capabilities.builtin.web_search"
+    class: "TavilyWebSearchPlugin"
+    enabled: true
+    rate_limit: 100
+
+  - id: "search.news_search"
+    module: "capabilities.builtin.news_search"
+    class: "NewsSearchPlugin"
+    enabled: true
+    rate_limit: 100
+
+  - id: "search.rss_monitoring"
+    module: "capabilities.builtin.rss_monitoring"
+    class: "RSSMonitoringPlugin"
+    enabled: true
+
+  - id: "business_intelligence.company_lookup"
+    module: "capabilities.builtin.company_lookup"
+    class: "CompanyLookupPlugin"
+    enabled: true
+
+  - id: "business_intelligence.funding_lookup"
+    module: "capabilities.builtin.funding_lookup"
+    class: "FundingLookupPlugin"
+    enabled: true
+
+  - id: "business_intelligence.hiring_analysis"
+    module: "capabilities.builtin.hiring_analysis"
+    class: "HiringAnalysisPlugin"
+    enabled: true
+
+  - id: "contact_intelligence.email_lookup"
+    module: "capabilities.builtin.email_lookup"
+    class: "HunterEmailLookupPlugin"
+    enabled: true
+
+  - id: "contact_intelligence.linkedin_lookup"
+    module: "capabilities.builtin.linkedin_lookup"
+    class: "LinkedInLookupPlugin"
+    enabled: true
+
+  - id: "data_processing.structured_extraction"
+    module: "capabilities.builtin.structured_extraction"
+    class: "LLMStructuredExtractionPlugin"
+    enabled: true
+
+  - id: "storage.postgresql"
+    module: "capabilities.builtin.postgres_storage"
+    class: "PostgreSQLStoragePlugin"
+    enabled: true
