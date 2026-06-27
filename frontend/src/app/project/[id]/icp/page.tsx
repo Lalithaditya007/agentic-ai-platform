@@ -14,6 +14,9 @@ export default function IcpReviewPage() {
   const [icpData, setIcpData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+  const [editSection, setEditSection] = useState<string | null>(null);
+  const [editData, setEditData] = useState<any>(null);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     if (projectId) {
@@ -45,9 +48,49 @@ export default function IcpReviewPage() {
   };
 
   const handleEdit = (section: string) => {
-    // In a full implementation, this would open an inline editor or modal.
-    // For demo purposes, we will just alert.
-    alert(`Editing ${section} is supported in the full build. You can modify the JSON directly via API for now.`);
+    setEditSection(section);
+    setSaveError("");
+    if (section === "ICP") {
+      setEditData({
+        industry: [...(icpData.industry || [])],
+        geography: [...(icpData.geography || [])],
+        company_size: { ...(icpData.company_size || {}) },
+        revenue_range: { ...(icpData.revenue_range || {}) },
+        employee_count_min: icpData.employee_count_min,
+        employee_count_max: icpData.employee_count_max
+      });
+    } else if (section === "Personas") {
+      setEditData([...(icpData.personas || [])]);
+    } else if (section === "Rules") {
+      setEditData([...(icpData.qualification_rules || [])]);
+    } else if (section === "Triggers") {
+      setEditData([...(icpData.triggers || [])]);
+    } else if (section === "Disqualifiers") {
+      setEditData([...(icpData.disqualifiers || [])]);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    try {
+      let updatedIcp = { ...icpData };
+      if (editSection === "ICP") {
+        updatedIcp = { ...updatedIcp, ...editData };
+      } else if (editSection === "Personas") {
+        updatedIcp.personas = editData;
+      } else if (editSection === "Rules") {
+        updatedIcp.qualification_rules = editData;
+      } else if (editSection === "Triggers") {
+        updatedIcp.triggers = editData;
+      } else if (editSection === "Disqualifiers") {
+        updatedIcp.disqualifiers = editData;
+      }
+      
+      await apiService.updateIcp(projectId, updatedIcp);
+      setIcpData(updatedIcp);
+      setEditSection(null);
+    } catch (err: any) {
+      setSaveError("Failed to save: " + (err.message || err));
+    }
   };
 
   if (loading) {
@@ -200,6 +243,152 @@ export default function IcpReviewPage() {
         </div>
 
       </motion.div>
+
+      {editSection && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.7)", zIndex: 1000,
+          display: "flex", justifyContent: "center", alignItems: "center"
+        }}>
+          <div className="glass-card" style={{ width: "600px", maxWidth: "90vw", maxHeight: "90vh", overflowY: "auto", padding: "32px" }}>
+            <h3 style={{ marginBottom: "24px", fontSize: "1.5rem" }}>Edit {editSection}</h3>
+            
+            {editSection === "ICP" && editData && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                <div>
+                  <label className="text-sm text-muted mb-2 block" style={{ display: "block" }}>Industries (comma separated)</label>
+                  <input className="input-field" value={editData.industry?.join(", ") || ""} onChange={(e) => setEditData({...editData, industry: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean)})} />
+                </div>
+                <div>
+                  <label className="text-sm text-muted mb-2 block" style={{ display: "block" }}>Geography (comma separated)</label>
+                  <input className="input-field" value={editData.geography?.join(", ") || ""} onChange={(e) => setEditData({...editData, geography: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean)})} />
+                </div>
+                <div className="grid-2">
+                  <div>
+                    <label className="text-sm text-muted mb-2 block" style={{ display: "block" }}>Min Employees</label>
+                    <input type="number" className="input-field" value={editData.company_size?.min || editData.employee_count_min || ''} onChange={(e) => setEditData({...editData, company_size: {...(editData.company_size || {}), min: parseInt(e.target.value)}, employee_count_min: parseInt(e.target.value)})} />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted mb-2 block" style={{ display: "block" }}>Max Employees</label>
+                    <input type="number" className="input-field" value={editData.company_size?.max || editData.employee_count_max || ''} onChange={(e) => setEditData({...editData, company_size: {...(editData.company_size || {}), max: parseInt(e.target.value)}, employee_count_max: parseInt(e.target.value)})} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {editSection === "Personas" && editData && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {editData.map((p: any, idx: number) => (
+                  <div key={idx} style={{ background: "rgba(0,0,0,0.2)", padding: "16px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div>
+                        <label className="text-xs text-muted mb-1 block" style={{ display: "block" }}>Job Title</label>
+                        <input className="input-field" value={p.title || ""} onChange={(e) => {
+                          const newData = [...editData]; newData[idx].title = e.target.value; setEditData(newData);
+                        }} />
+                      </div>
+                      <div className="grid-2">
+                        <div>
+                          <label className="text-xs text-muted mb-1 block" style={{ display: "block" }}>Priority</label>
+                          <select className="input-field" value={p.priority || "Medium"} onChange={(e) => {
+                            const newData = [...editData]; newData[idx].priority = e.target.value; setEditData(newData);
+                          }}>
+                            <option value="High" style={{background: 'var(--bg-primary)'}}>High</option>
+                            <option value="Medium" style={{background: 'var(--bg-primary)'}}>Medium</option>
+                            <option value="Low" style={{background: 'var(--bg-primary)'}}>Low</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted mb-1 block" style={{ display: "block" }}>Seniority</label>
+                          <input className="input-field" value={p.seniority || ""} onChange={(e) => {
+                            const newData = [...editData]; newData[idx].seniority = e.target.value; setEditData(newData);
+                          }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button className="btn-secondary mt-2" onClick={() => setEditData([...editData, { title: "", priority: "Medium", seniority: "" }])}>
+                  + Add Persona
+                </button>
+              </div>
+            )}
+
+            {editSection === "Rules" && editData && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {editData.map((r: any, idx: number) => (
+                  <div key={idx} className="grid-3" style={{ alignItems: "center" }}>
+                    <input className="input-field" placeholder="Field" value={r.field || ""} onChange={(e) => {
+                      const newData = [...editData]; newData[idx].field = e.target.value; setEditData(newData);
+                    }} />
+                    <select className="input-field" value={r.operator || "eq"} onChange={(e) => {
+                      const newData = [...editData]; newData[idx].operator = e.target.value; setEditData(newData);
+                    }}>
+                      <option value="eq" style={{background: 'var(--bg-primary)'}}>Equals (eq)</option>
+                      <option value="gte" style={{background: 'var(--bg-primary)'}}>Greater/Eq (gte)</option>
+                      <option value="lte" style={{background: 'var(--bg-primary)'}}>Less/Eq (lte)</option>
+                      <option value="in" style={{background: 'var(--bg-primary)'}}>In (in)</option>
+                    </select>
+                    <input className="input-field" placeholder="Value" value={r.value || ""} onChange={(e) => {
+                      const newData = [...editData]; newData[idx].value = e.target.value; setEditData(newData);
+                    }} />
+                  </div>
+                ))}
+                <button className="btn-secondary mt-2" onClick={() => setEditData([...editData, { field: "", operator: "eq", value: "" }])}>
+                  + Add Rule
+                </button>
+              </div>
+            )}
+
+            {editSection === "Triggers" && editData && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {editData.map((t: any, idx: number) => (
+                  <div key={idx} className="flex gap-2">
+                    <input className="input-field flex-1" placeholder="Trigger Type (e.g., EXPANSION)" value={t.type || ""} onChange={(e) => {
+                      const newData = [...editData]; newData[idx].type = e.target.value.toUpperCase(); setEditData(newData);
+                    }} />
+                  </div>
+                ))}
+                <button className="btn-secondary mt-2" onClick={() => setEditData([...editData, { type: "" }])}>
+                  + Add Trigger
+                </button>
+              </div>
+            )}
+
+            {editSection === "Disqualifiers" && editData && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {editData.map((d: any, idx: number) => (
+                  <div key={idx} style={{ background: "rgba(0,0,0,0.2)", padding: "16px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div>
+                        <label className="text-xs text-muted mb-1 block" style={{ display: "block" }}>Condition</label>
+                        <input className="input-field" value={d.condition || ""} onChange={(e) => {
+                          const newData = [...editData]; newData[idx].condition = e.target.value; setEditData(newData);
+                        }} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted mb-1 block" style={{ display: "block" }}>Description</label>
+                        <textarea className="input-field" style={{ minHeight: "60px" }} value={d.description || ""} onChange={(e) => {
+                          const newData = [...editData]; newData[idx].description = e.target.value; setEditData(newData);
+                        }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button className="btn-secondary mt-2" onClick={() => setEditData([...editData, { condition: "", description: "", severity: "hard" }])}>
+                  + Add Disqualifier
+                </button>
+              </div>
+            )}
+
+            {saveError && <p style={{ color: "var(--accent-danger)", marginTop: "16px" }}>{saveError}</p>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "32px" }}>
+              <button className="btn-secondary" onClick={() => setEditSection(null)}>Cancel</button>
+              <button className="btn-primary" onClick={handleSaveEdit}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
