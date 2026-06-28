@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from sqlalchemy import select
 from database.models import AsyncSessionLocal, Project
+from api.auth import get_current_user_id
 
 router = APIRouter()
 
@@ -22,12 +23,13 @@ class ProjectResponse(BaseModel):
 
 
 @router.post("/projects", response_model=ProjectResponse)
-async def create_project(body: CreateProjectRequest):
+async def create_project(body: CreateProjectRequest, user_id: str = Depends(get_current_user_id)):
     """Create a new project from a business description."""
     async with AsyncSessionLocal() as db:
         project = Project(
             name=body.name,
             business_description=body.business_description,
+            user_id=user_id,
             status="draft",
         )
         db.add(project)
@@ -42,11 +44,18 @@ async def create_project(body: CreateProjectRequest):
         )
 
 
+from fastapi_cache.decorator import cache
+
 @router.get("/projects", response_model=list[ProjectResponse])
-async def list_projects():
-    """List all projects."""
+@cache(expire=15)
+async def list_projects(user_id: str = Depends(get_current_user_id)):
+    """List all projects for the authenticated user."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+        result = await db.execute(
+            select(Project)
+            .where(Project.user_id == user_id)
+            .order_by(Project.created_at.desc())
+        )
         projects = result.scalars().all()
         return [
             ProjectResponse(

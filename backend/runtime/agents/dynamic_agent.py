@@ -24,6 +24,7 @@ import json
 from datetime import datetime, timezone
 
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 class DynamicAgent(BaseAgent):

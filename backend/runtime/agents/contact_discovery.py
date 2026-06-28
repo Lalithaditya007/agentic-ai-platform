@@ -11,7 +11,10 @@ Discovers decision-maker contacts for each enriched company.
 
 import json
 import hashlib
+import re
+import uuid
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 CONTACT_SCHEMA = """{
@@ -26,11 +29,21 @@ CONTACT_SCHEMA = """{
 
 class ContactDiscoveryAgent(BaseAgent):
     agent_name = "contact_discovery"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
+
+    def _extract_name_from_text(self, text: str) -> str:
+        if not text:
+            return "unavailable"
+        match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b", text)
+        return match.group(1) if match else "unavailable"
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config
-        enriched_companies = state.get("enriched_companies", [])
+        enriched_companies = (
+            state.get("enriched_companies", [])
+            or state.get("validated_companies", [])
+            or state.get("candidate_companies", [])
+        )
         personas = icp_config.get("personas") or [
             {"title": "CISO", "seniority": "C-Suite", "priority": 1},
             {"title": "IT Director", "seniority": "Director", "priority": 2},
@@ -56,6 +69,7 @@ class ContactDiscoveryAgent(BaseAgent):
                     continue
 
                 contact = {
+                    "company_id": company.get("company_id"),
                     "company_name": company_name,
                     "company_domain": domain,
                     "designation": title,
@@ -97,7 +111,10 @@ Return ONLY JSON: {{"full_name": "First Last or null"}}"""
                                     contact["full_name"] = extracted_name
                                     contact["confidence_score"] = 0.65
                             except Exception:
-                                pass
+                                heuristic_name = self._extract_name_from_text(f"{title_from_page} {snippet}")
+                                if heuristic_name != "unavailable":
+                                    contact["full_name"] = heuristic_name
+                                    contact["confidence_score"] = 0.55
 
                 # Email lookup (Hunter.io)
                 if "contact_intelligence.email_lookup" in self.capabilities and domain:
@@ -117,6 +134,7 @@ Return ONLY JSON: {{"full_name": "First Last or null"}}"""
 
                 company_contacts.append(contact)
                 await self._cache_contact(cache_key, [contact])
+                await self._save_contact(contact)
 
             all_contacts.extend(company_contacts)
             print(f"[{self.agent_name}] Found {len(company_contacts)} contacts for {company_name}")
@@ -149,3 +167,32 @@ Return ONLY JSON: {{"full_name": "First Last or null"}}"""
             await redis_set(cache_key, json.dumps(contacts), ttl_seconds=TTL_CONTACT)
         except Exception:
             pass
+
+    async def _save_contact(self, contact: dict):
+        try:
+            from database.models import AsyncSessionLocal, Contact
+
+            company_id = contact.get("company_id")
+            if not company_id:
+                return
+
+            async with AsyncSessionLocal() as db:
+                db_contact = Contact(
+                    company_id=uuid.UUID(company_id),
+                    full_name=contact.get("full_name"),
+                    designation=contact.get("designation"),
+                    department=contact.get("department"),
+                    email=contact.get("email"),
+                    email_confidence=contact.get("email_confidence", 0.0),
+                    phone=contact.get("phone"),
+                    linkedin_url=contact.get("linkedin_url"),
+                    confidence_score=contact.get("confidence_score", 0.0),
+                    source=contact.get("source"),
+                    is_unavailable_email=contact.get("email") == "unavailable",
+                    is_unavailable_phone=contact.get("phone") == "unavailable",
+                    is_unavailable_linkedin=contact.get("linkedin_url") == "unavailable",
+                )
+                db.add(db_contact)
+                await db.commit()
+        except Exception as e:
+            print(f"[{self.agent_name}] Contact save failed for {contact.get('company_name')}: {e}")

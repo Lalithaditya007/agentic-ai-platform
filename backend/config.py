@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # ── APP ───────────────────────────────────────────────────────────────────
     DEMO_MODE: bool = False
     APP_ENV: str = "development"
+    SUPABASE_JWT_SECRET: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -60,3 +61,21 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+def get_llm_model(capability_tier: str = "primary") -> str:
+    """
+    Returns the correct model string based on the active LLM_PROVIDER.
+    This prevents agents from crashing when the provider is switched in .env.
+    """
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "groq":
+        return "gemma2-9b-it"
+    elif provider == "openrouter":
+        return "google/gemma-2-9b-it:free"
+    elif provider == "google":
+        return "gemini-1.5-flash"
+    elif provider == "openai":
+        return "gpt-4o-mini"
+    
+    # Fallback default
+    return "google/gemma-2-9b-it:free"

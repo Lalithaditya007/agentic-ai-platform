@@ -9,7 +9,7 @@ if sys.stdout.encoding.lower() != 'utf-8':
 
 from config import settings
 from database.models import create_tables
-from memory.redis_client import init_redis
+from memory.redis_client import init_redis, get_redis
 from memory.chromadb_client import init_chromadb
 
 
@@ -34,10 +34,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] PostgreSQL startup error: {e}")
 
-    # Initialize Redis connection
+    # Initialize Redis connection and FastAPI Cache
     try:
         await init_redis()
-        print("[OK] Redis (Upstash) connected")
+        redis_client = get_redis()
+        from fastapi_cache import FastAPICache
+        from fastapi_cache.backends.redis import RedisBackend
+        FastAPICache.init(RedisBackend(redis_client), prefix="cache")
+        print("[OK] Redis (Upstash) connected & Caching enabled")
     except Exception as e:
         print(f"[WARN] Redis connection failed (caching disabled): {e}")
 

@@ -17,7 +17,9 @@ New approach:
 """
 
 import uuid
+from urllib.parse import urlparse
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 # ICP-aware query templates. {industry}, {geo}, {persona_role}, {size} are
@@ -77,7 +79,107 @@ def _build_queries(icp_config: dict) -> tuple[list[str], str]:
 
 class CompanyDiscoveryAgent(BaseAgent):
     agent_name = "company_discovery"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
+
+    def _build_structured_fallback_candidates(
+        self,
+        structured_candidates: list[dict],
+        trigger_candidates: list[dict],
+    ) -> list[dict]:
+        """
+        Use structured search sources directly when LLM extraction is unavailable.
+        Validation still runs after this, so this fallback should prefer recall.
+        """
+        merged = []
+        seen: set[str] = set()
+
+        for company in [*structured_candidates, *trigger_candidates]:
+            if not isinstance(company, dict):
+                continue
+
+            name = (company.get("name") or "").strip()
+            if not name:
+                continue
+
+            domain = (company.get("domain") or "").lower().strip()
+            dedup_key = domain or name.lower()
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            merged.append({
+                "name": name,
+                "domain": domain,
+                "industry": company.get("industry"),
+                "headquarters": company.get("headquarters"),
+                "employee_count": company.get("employee_count"),
+                "trigger_source": company.get("trigger_source") or company.get("source") or "structured_discovery",
+                "trigger_confidence": company.get("trigger_confidence", 0.6),
+                "trigger_detail": company.get("trigger_detail") or "Matched via structured company discovery source",
+                "website": company.get("website"),
+                "company_id": str(uuid.uuid4()),
+            })
+
+        return merged[:20]
+
+    def _build_web_fallback_candidates(
+        self,
+        web_hits: list[dict],
+        news_hits: list[dict],
+        industry: list[str],
+    ) -> list[dict]:
+        """Recover company candidates directly from search result titles and domains."""
+        target_industry = industry[0] if industry else ""
+        candidates: list[dict] = []
+        seen: set[str] = set()
+
+        def add_candidate(name: str, domain: str, detail: str, confidence: float):
+            clean_name = (name or "").strip()
+            clean_domain = (domain or "").lower().strip()
+            if not clean_name:
+                return
+            dedup_key = clean_domain or clean_name.lower()
+            if dedup_key in seen:
+                return
+            seen.add(dedup_key)
+            candidates.append({
+                "name": clean_name,
+                "domain": clean_domain,
+                "industry": target_industry,
+                "headquarters": None,
+                "employee_count": None,
+                "trigger_source": "web_discovery",
+                "trigger_confidence": confidence,
+                "trigger_detail": detail,
+                "company_id": str(uuid.uuid4()),
+            })
+
+        def parse_name_from_title(title: str, fallback_domain: str) -> str:
+            if title:
+                primary = title.split(" | ")[0].split(" - ")[0].split(":")[0].strip()
+                words = primary.split()
+                if 1 <= len(words) <= 6:
+                    return primary
+            if fallback_domain:
+                root = fallback_domain.split(".")[0].replace("-", " ").replace("_", " ")
+                return " ".join(part.capitalize() for part in root.split())
+            return ""
+
+        for hit in web_hits:
+            url = hit.get("url", "")
+            host = (urlparse(url).hostname or "").lower()
+            domain = host[4:] if host.startswith("www.") else host
+            name = parse_name_from_title(hit.get("title", ""), domain)
+            add_candidate(name, domain, "Recovered from ICP-targeted web search result", 0.5)
+
+        for hit in news_hits:
+            title = hit.get("title", "")
+            if not title:
+                continue
+            name = parse_name_from_title(title, "")
+            add_candidate(name, "", "Recovered from ICP-targeted news result", 0.35)
+
+        return candidates[:20]
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config
@@ -94,6 +196,8 @@ class CompanyDiscoveryAgent(BaseAgent):
 
         # ── Step 2: Multi-pass Tavily web search ──────────────────────────────
         raw_content_parts: list[str] = []
+        web_hits_for_fallback: list[dict] = []
+        news_hits_for_fallback: list[dict] = []
 
         if "search.web_search" in self.capabilities:
             for i, query in enumerate(web_queries):
@@ -104,6 +208,7 @@ class CompanyDiscoveryAgent(BaseAgent):
                     })
                     hits = result.get("data", [])
                     if hits:
+                        web_hits_for_fallback.extend(hits)
                         chunk = "\n".join(
                             f"[WEB-{i}] TITLE: {h.get('title','')}\nURL: {h.get('url','')}\nSNIPPET: {h.get('content','')[:300]}"
                             for h in hits
@@ -124,6 +229,7 @@ class CompanyDiscoveryAgent(BaseAgent):
                 })
                 articles = result.get("data", [])
                 if articles:
+                    news_hits_for_fallback.extend(articles)
                     chunk = "\n".join(
                         f"[NEWS] TITLE: {a.get('title','')}\nSOURCE: {a.get('source','')}\nSNIPPET: {a.get('content','')[:300]}"
                         for a in articles
@@ -309,6 +415,17 @@ Return JSON array:
                 print(f"[{self.agent_name}] LLM returned non-list: {type(result)}")
         except Exception as e:
             print(f"[{self.agent_name}] LLM extraction failed: {e}")
+            discovered = self._build_structured_fallback_candidates(structured_candidates, trigger_candidates)
+            if not discovered:
+                discovered = self._build_web_fallback_candidates(
+                    web_hits=web_hits_for_fallback,
+                    news_hits=news_hits_for_fallback,
+                    industry=industry,
+                )
+            print(
+                f"[{self.agent_name}] Fallback recovered "
+                f"{len(discovered)} candidate companies"
+            )
 
         # ── Step 6: Deduplicate by domain ─────────────────────────────────────
         seen_domains: set[str] = set()

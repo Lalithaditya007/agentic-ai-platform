@@ -21,19 +21,30 @@ Stores vector embedding in ChromaDB for future similarity.
 import uuid
 from datetime import datetime, timezone
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 class BusinessBriefAgent(BaseAgent):
     agent_name = "business_brief"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
 
     async def run(self, state: dict) -> dict:
         enriched_companies = state.get("enriched_companies", [])
+        source_label = "enriched_companies"
+        if not enriched_companies:
+            enriched_companies = state.get("validated_companies", [])
+            source_label = "validated_companies"
+        if not enriched_companies:
+            enriched_companies = state.get("candidate_companies", [])
+            source_label = "candidate_companies"
         all_contacts = state.get("discovered_contacts", [])
         nba_recommendations = state.get("nba_recommendations", [])
         workflow_run_id = state.get("workflow_run_id", "")
 
-        print(f"[{self.agent_name}] Generating briefs for {len(enriched_companies)} companies")
+        print(
+            f"[{self.agent_name}] Generating briefs for {len(enriched_companies)} companies "
+            f"from {source_label}"
+        )
 
         business_briefs = []
 

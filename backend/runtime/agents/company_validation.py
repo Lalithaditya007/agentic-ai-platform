@@ -6,11 +6,12 @@ Only companies with ICP match score >= 0.60 continue to enrichment.
 """
 
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 class CompanyValidationAgent(BaseAgent):
     agent_name = "company_validation"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
     MIN_CONFIDENCE = 0.35
 
     async def run(self, state: dict) -> dict:
@@ -28,12 +29,27 @@ class CompanyValidationAgent(BaseAgent):
         qual_rules = icp_config.get("qualification_rules") or []
 
         validated = []
+        duplicates_avoided = state.get("duplicates_avoided", 0)
 
         for company in candidates:
             company_name = company.get("name", "")
             company_industry = (company.get("industry") or "").lower()
             employee_count = company.get("employee_count") or company.get("initial_metadata", {}).get("employee_count", 0)
             headquarters = (company.get("headquarters") or "").lower()
+            domain = company.get("domain", "")
+
+            if domain:
+                try:
+                    from memory.deduplication import check_deduplication
+                    dedup_res = await check_deduplication(domain, company_name)
+                    if dedup_res["skip"]:
+                        duplicates_avoided += 1
+                        print(f"[{self.agent_name}] DUPLICATE {company_name}: {dedup_res['reason']}")
+                        continue
+                    if dedup_res.get("flag_for_review"):
+                        company["possible_duplicate"] = True
+                except Exception as e:
+                    print(f"[{self.agent_name}] Dedup check failed for {company_name}: {e}")
 
             icp_score = 0.0
             score_breakdown = {}
@@ -109,7 +125,7 @@ class CompanyValidationAgent(BaseAgent):
 
         return {
             "validated_companies": validated,
-            "duplicates_avoided": state.get("duplicates_avoided", 0),
+            "duplicates_avoided": duplicates_avoided,
             "agent_metrics": state.get("agent_metrics", []) + [
                 self.build_metric(
                     status="success",

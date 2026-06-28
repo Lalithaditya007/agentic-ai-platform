@@ -5,6 +5,7 @@ from database.models import AsyncSessionLocal, WorkflowRun, Project, ICPConfigur
 from sqlalchemy import select
 from datetime import datetime, timezone
 from planner.workflow_graph import get_platform_graph
+from services.icp_builder import serialize_icp_configuration
 
 router = APIRouter()
 
@@ -19,6 +20,7 @@ async def run_workflow_background(run_id: uuid.UUID, project_id: uuid.UUID, icp_
     """Background task to execute the workflow."""
     try:
         graph = get_platform_graph()
+        execution_events = []
         initial_state = {
             "project_id": str(project_id),
             "workflow_run_id": str(run_id),
@@ -45,6 +47,10 @@ async def run_workflow_background(run_id: uuid.UUID, project_id: uuid.UUID, icp_
         # Note: LangGraph might pause at hitl_review node
         async for output in graph.astream(initial_state, config=config):
             node_name = list(output.keys())[0] if output else "unknown"
+            execution_events.append({
+                "node": node_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
             await manager.send(str(run_id), {
                 "type": "node_complete",
                 "node": node_name,
@@ -55,12 +61,29 @@ async def run_workflow_background(run_id: uuid.UUID, project_id: uuid.UUID, icp_
         state_snapshot = await graph.aget_state(config)
         is_paused = len(state_snapshot.next) > 0
         final_status = "paused_hitl" if is_paused else "completed"
+        final_state = state_snapshot.values or {}
+        execution_summary = {
+            "events": execution_events,
+            "agent_metrics": final_state.get("agent_metrics", []),
+            "errors": final_state.get("errors", []),
+            "warnings": final_state.get("warnings", []),
+            "duplicates_avoided": final_state.get("duplicates_avoided", 0),
+            "memory_hits": final_state.get("memory_hits", 0),
+            "candidate_companies_count": len(final_state.get("candidate_companies", []) or []),
+            "validated_companies_count": len(final_state.get("validated_companies", []) or []),
+            "enriched_companies_count": len(final_state.get("enriched_companies", []) or []),
+            "contacts_count": len(final_state.get("discovered_contacts", []) or []),
+            "briefs_count": len(final_state.get("business_briefs", []) or []),
+        }
         
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
             run_record = result.scalar_one_or_none()
             if run_record:
                 run_record.status = final_status
+                run_record.planner_strategy = final_state.get("execution_strategy")
+                run_record.agent_execution_log = execution_summary
+                run_record.total_cost_estimate = final_state.get("total_cost_estimate", 0.0) or 0.0
                 if not is_paused:
                     run_record.completed_at = datetime.now(timezone.utc)
                 await db.commit()
@@ -72,6 +95,10 @@ async def run_workflow_background(run_id: uuid.UUID, project_id: uuid.UUID, icp_
             run_record = result.scalar_one_or_none()
             if run_record:
                 run_record.status = "failed"
+                run_record.agent_execution_log = {
+                    "events": [],
+                    "errors": [{"workflow": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}],
+                }
                 await db.commit()
 
 
@@ -100,20 +127,8 @@ async def start_workflow(project_id: uuid.UUID, background_tasks: BackgroundTask
         await db.commit()
         await db.refresh(new_run)
         
-        # Build ICP dict for graph
-        icp_data = {
-            "industry": icp.industry,
-            "company_size": icp.company_size,
-            "revenue_range": icp.revenue_range,
-            "geography": icp.geography,
-            "employee_count_min": icp.employee_count_min,
-            "employee_count_max": icp.employee_count_max,
-            "personas": icp.personas,
-            "triggers": icp.triggers,
-            "qualification_rules": icp.qualification_rules,
-            "disqualifiers": icp.disqualifiers,
-            "constraints": icp.constraints,
-        }
+        # Build ICP dict for graph, preserving richer business-understanding context.
+        icp_data = serialize_icp_configuration(icp)
         
         # Trigger background task
         background_tasks.add_task(run_workflow_background, new_run.id, project_id, icp.id, icp_data)
@@ -133,7 +148,9 @@ async def get_workflow(run_id: uuid.UUID):
             "run_id": str(run_record.id), 
             "status": run_record.status,
             "started_at": run_record.started_at,
-            "completed_at": run_record.completed_at
+            "completed_at": run_record.completed_at,
+            "total_cost_estimate": run_record.total_cost_estimate,
+            "planner_strategy": run_record.planner_strategy,
         }
 
 
@@ -152,6 +169,16 @@ async def get_workflow_graph(run_id: uuid.UUID):
             "strategy": state_values.get("execution_strategy"),
             "agent_specs": state_values.get("agent_specs"),
             "metrics": state_values.get("agent_metrics"),
+            "summary": {
+                "candidate_companies_count": len(state_values.get("candidate_companies", []) or []),
+                "validated_companies_count": len(state_values.get("validated_companies", []) or []),
+                "enriched_companies_count": len(state_values.get("enriched_companies", []) or []),
+                "contacts_count": len(state_values.get("discovered_contacts", []) or []),
+                "briefs_count": len(state_values.get("business_briefs", []) or []),
+                "duplicates_avoided": state_values.get("duplicates_avoided", 0),
+                "memory_hits": state_values.get("memory_hits", 0),
+                "errors": state_values.get("errors", []),
+            },
         }
     except Exception:
         return {"run_id": str(run_id), "message": "No graph state found"}

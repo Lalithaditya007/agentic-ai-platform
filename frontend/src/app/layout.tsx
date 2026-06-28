@@ -26,7 +26,7 @@ export default function RootLayout({
           top: "16px",
           zIndex: 100
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "12px", textDecoration: "none", color: "inherit" }}>
             <div style={{ 
               background: "linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))",
               padding: "8px",
@@ -38,7 +38,7 @@ export default function RootLayout({
             <h1 style={{ fontSize: "1.25rem", margin: 0 }}>
               Agentic <span className="text-gradient">Platform</span>
             </h1>
-          </div>
+          </Link>
           
           <div style={{ display: "flex", gap: "32px", alignItems: "center" }}>
             <Link href="/" style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.9rem", color: "var(--text-secondary)", transition: "color 0.2s" }} className="hover:text-white">

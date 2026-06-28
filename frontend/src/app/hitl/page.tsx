@@ -15,6 +15,9 @@ import {
   AlertCircle,
   Wifi,
   WifiOff,
+  Edit3,
+  Users,
+  Target
 } from "lucide-react";
 import { Suspense } from "react";
 
@@ -46,52 +49,68 @@ function RunStatusBadge({ status }: { status: string | null }) {
   );
 }
 
+import useSWR from "swr";
+import { api } from "@/lib/api";
+
+interface HitlQueueItem {
+  id: string;
+  company_name: string;
+  status: string;
+  overall_confidence: number | null;
+  created_at?: string;
+}
+
+interface DecisionMaker {
+  name: string;
+  title: string;
+  email: string;
+}
+
+interface HitlBrief {
+  id: string;
+  company_name: string;
+  company_domain?: string | null;
+  company_summary?: string | null;
+  trigger_summary?: string | null;
+  qualification_summary?: string | null;
+  company_insights?: string[] | null;
+  decision_makers?: DecisionMaker[] | null;
+  next_best_actions?: string[] | null;
+  priority_score?: number | null;
+  overall_confidence?: number | null;
+  hitl_status?: string | null;
+}
+
+interface HitlQueueResponse {
+  queue: HitlQueueItem[];
+  run_id?: string | null;
+  run_status?: string | null;
+}
+
+const fetcher = (url: string) => api.get(url).then(res => res.data);
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 function HitlContent() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get("project");
 
-  const [queue, setQueue] = useState<any[]>([]);
-  const [runId, setRunId] = useState<string | null>(null);
-  const [runStatus, setRunStatus] = useState<string | null>(null);
-  const [selectedBrief, setSelectedBrief] = useState<any>(null);
+  const [selectedBrief, setSelectedBrief] = useState<HitlBrief | null>(null);
   const [researchQuery, setResearchQuery] = useState("");
   const [wsLogs, setWsLogs] = useState<{ node: string; time: string; status: string }[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
-  const [queueLoading, setQueueLoading] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // ── Load queue — filtered by project + current run ─────────────────────
-  const loadQueue = useCallback(async () => {
-    try {
-      // Pass project_id so the API returns ONLY briefs from this project's
-      // most recent workflow run — not briefs from old runs or other projects
-      const endpoint = projectId
-        ? `/hitl/queue?project_id=${projectId}`
-        : "/hitl/queue";
+  // ── Load queue via SWR — filtered by project + current run ─────────────
+  const endpoint = projectId ? `/hitl/queue?project_id=${projectId}` : "/hitl/queue";
+  const { data, error, isLoading: queueLoading, mutate } = useSWR<HitlQueueResponse>(endpoint, fetcher, {
+    refreshInterval: 8000,
+  });
+  const loadQueue = useCallback(() => mutate(), [mutate]);
 
-      const res = await fetch(`${API_URL}/api${endpoint}`);
-      const data = await res.json();
-
-      setQueue(data.queue || []);
-
-      // Track run metadata so we can show the live status badge
-      if (data.run_id) setRunId(data.run_id);
-      if (data.run_status) setRunStatus(data.run_status);
-    } catch (err) {
-      console.error("[HITL] Failed to load queue:", err);
-    } finally {
-      setQueueLoading(false);
-    }
-  }, [projectId]);
-
-  // ── Poll queue every 8s — so briefs appear as they're generated ─────────
-  useEffect(() => {
-    loadQueue();
-    const interval = setInterval(loadQueue, 8000);
-    return () => clearInterval(interval);
-  }, [loadQueue]);
+  const queue = data?.queue || [];
+  const runId = data?.run_id || null;
+  const runStatus = data?.run_status || null;
 
   // ── WebSocket for live workflow node events ───────────────────────────────
   useEffect(() => {
@@ -357,7 +376,7 @@ function HitlContent() {
                     {(selectedBrief.decision_makers ?? []).length === 0 ? (
                       <p className="text-sm text-muted">No contacts discovered for this company.</p>
                     ) : (
-                      selectedBrief.decision_makers.map((dm: any, i: number) => (
+                      (selectedBrief.decision_makers ?? []).map((dm: DecisionMaker, i: number) => (
                         <div key={i} style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "8px" }}>
                           <div className="font-medium">{dm.name}</div>
                           <div className="text-xs text-muted mb-2">{dm.title}</div>
@@ -399,6 +418,17 @@ function HitlContent() {
                   >
                     <XCircle size={18} /> Reject
                   </button>
+                  <div style={{ display: "flex", gap: "8px", marginLeft: "16px", paddingLeft: "16px", borderLeft: "1px solid var(--border-color)" }}>
+                    <button onClick={() => handleAction("modify")} className="btn-secondary" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <Edit3 size={16} /> Modify
+                    </button>
+                    <button onClick={() => handleAction("change_personas")} className="btn-secondary" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <Users size={16} /> Change Personas
+                    </button>
+                    <button onClick={() => handleAction("update_icp")} className="btn-secondary" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <Target size={16} /> Update ICP
+                    </button>
+                  </div>
                   <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
                     <input
                       type="text"
@@ -431,10 +461,17 @@ function HitlContent() {
   );
 }
 
+import dynamic from 'next/dynamic';
+
+const DynamicHitlContent = dynamic(() => Promise.resolve(HitlContent), { 
+  ssr: false, 
+  loading: () => <div className="container mt-8 text-center text-muted">Loading Application...</div>
+});
+
 export default function HitlPage() {
   return (
     <Suspense fallback={<div className="container mt-8 text-center text-muted">Loading…</div>}>
-      <HitlContent />
+      <DynamicHitlContent />
     </Suspense>
   );
 }

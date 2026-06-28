@@ -39,6 +39,10 @@ class ICPResponse(BaseModel):
     disqualifiers: list | None = None
     constraints: list | None = None
     confidence_indicator: float | None = None
+    target_market_description: str | None = None
+    product_or_service: str | None = None
+    value_proposition: str | None = None
+    confidence_notes: str | None = None
     confirmed_at: str | None = None
     created_at: str | None = None
 
@@ -60,6 +64,10 @@ def _icp_to_response(icp: ICPConfiguration) -> dict:
         "disqualifiers": icp.disqualifiers,
         "constraints": icp.constraints,
         "confidence_indicator": icp.confidence_indicator,
+        "target_market_description": icp.target_market_description,
+        "product_or_service": icp.product_or_service,
+        "value_proposition": icp.value_proposition,
+        "confidence_notes": icp.confidence_notes,
         "confirmed_at": icp.confirmed_at.isoformat() if icp.confirmed_at else None,
         "created_at": icp.created_at.isoformat() if icp.created_at else None,
     }
@@ -151,17 +159,15 @@ async def update_icp(project_id: UUID, body: dict):
             "employee_count_min", "employee_count_max", "personas",
             "triggers", "qualification_rules", "disqualifiers",
             "constraints", "confidence_indicator",
+            "_target_market_description", "_product_or_service",
+            "_value_proposition", "_confidence_notes",
         }
         filtered = {k: v for k, v in body.items() if k in allowed_fields}
 
-        new_icp = ICPConfiguration(
-            project_id=project_id,
-            version=next_version,
-            **filtered,
-        )
-        db.add(new_icp)
-        await db.commit()
-        await db.refresh(new_icp)
+        from services.icp_builder import save_icp_config
+
+        filtered["version"] = next_version
+        new_icp = await save_icp_config(project_id, filtered, auto_version=False)
         return {
             "id": str(new_icp.id),
             "version": new_icp.version,

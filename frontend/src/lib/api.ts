@@ -1,13 +1,25 @@
 import axios from 'axios';
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: `${API_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+api.interceptors.request.use(async (config) => {
+  // Only import createClient when needed to avoid issues if used server-side
+  const { createClient } = await import('@/lib/supabase');
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (session?.access_token) {
+    config.headers.Authorization = `Bearer ${session.access_token}`;
+  }
+  return config;
 });
 
 export const apiService = {

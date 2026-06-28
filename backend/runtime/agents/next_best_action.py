@@ -15,15 +15,55 @@ Uses historical decisions from ChromaDB to improve recommendations.
 """
 
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 class NextBestActionAgent(BaseAgent):
     agent_name = "next_best_action"
-    llm_model = "deepseek/deepseek-r1:free"
+    llm_model = get_llm_model()
+
+    def _build_heuristic_nba(self, company: dict, company_contacts: list[dict]) -> dict:
+        icp_score = company.get("icp_match_score", 0.5) or 0.5
+        trigger_conf = company.get("trigger_confidence", 0.5) or 0.5
+        has_contact = bool(company_contacts)
+        priority_score = min(1.0, round((icp_score * 0.7) + (trigger_conf * 0.3), 3))
+        recommended_contact = company_contacts[0] if has_contact else None
+        channel = "email" if has_contact and recommended_contact.get("email") not in (None, "", "unavailable") else "linkedin"
+        company_name = company.get("name", "")
+        industry = company.get("industry", "target")
+
+        return {
+            "company_name": company_name,
+            "company_domain": company.get("domain", ""),
+            "priority_score": priority_score,
+            "recommended_contact": recommended_contact,
+            "recommended_channel": channel,
+            "recommended_timing": "Within 5 business days" if trigger_conf >= 0.7 else "This week",
+            "talking_points": [
+                f"Lead with the ICP fit for {company_name} in {industry}.",
+                f"Reference the observed trigger: {company.get('trigger_detail', 'recent market activity')}.",
+                "Offer a concise discovery call focused on security, compliance, and growth priorities.",
+            ],
+            "business_opportunity_summary": (
+                f"{company_name} is a qualified {industry} target with an ICP score of "
+                f"{icp_score:.0%} and meaningful trigger activity."
+            ),
+            "risk_factors": [] if has_contact else ["Decision-maker contact coverage is still limited."],
+            "confidence_score": round((priority_score + (0.1 if has_contact else 0.0)), 3),
+            "confidence_breakdown": {
+                "data_quality": 0.7 if has_contact else 0.45,
+                "icp_match": icp_score,
+                "trigger_strength": trigger_conf,
+            },
+        }
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config
-        enriched_companies = state.get("enriched_companies", [])
+        enriched_companies = (
+            state.get("enriched_companies", [])
+            or state.get("validated_companies", [])
+            or state.get("candidate_companies", [])
+        )
         all_contacts = state.get("discovered_contacts", [])
 
         print(f"[{self.agent_name}] Generating NBA for {len(enriched_companies)} companies")
@@ -116,18 +156,7 @@ Return ONLY valid JSON:
 
             except Exception as e:
                 print(f"[{self.agent_name}] Failed NBA for {company_name}: {e}")
-                nba_recommendations.append({
-                    "company_name": company_name,
-                    "company_domain": company.get("domain", ""),
-                    "priority_score": company.get("icp_match_score", 0.5),
-                    "recommended_contact": company_contacts[0] if company_contacts else None,
-                    "recommended_channel": "email",
-                    "recommended_timing": "This week",
-                    "talking_points": [],
-                    "business_opportunity_summary": f"High-priority {company.get('industry', '')} company matching your ICP.",
-                    "risk_factors": [],
-                    "confidence_score": 0.5,
-                })
+                nba_recommendations.append(self._build_heuristic_nba(company, company_contacts))
 
         print(f"[{self.agent_name}] Generated {len(nba_recommendations)} NBA recommendations")
 

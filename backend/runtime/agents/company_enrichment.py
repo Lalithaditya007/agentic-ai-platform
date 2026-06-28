@@ -13,7 +13,9 @@ Checks Redis cache first. Stores to PostgreSQL + ChromaDB.
 
 import json
 from datetime import datetime, timezone
+import uuid
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 
 
 ENRICHMENT_SCHEMA = """{
@@ -33,7 +35,7 @@ ENRICHMENT_SCHEMA = """{
 
 class CompanyEnrichmentAgent(BaseAgent):
     agent_name = "company_enrichment"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
 
     async def run(self, state: dict) -> dict:
         validated = state.get("validated_companies", [])
@@ -130,6 +132,9 @@ RULES:
             # Store in ChromaDB
             await self._store_in_chromadb(company_name, domain, enriched_data)
 
+            # Persist for analytics and deduplication visibility
+            await self._save_company_record(company, state.get("workflow_run_id", ""))
+
         print(f"[{self.agent_name}] Enriched {len(enriched)} companies")
 
         return {
@@ -155,6 +160,39 @@ RULES:
                 return json.loads(cached)
         except Exception:
             pass
+
+    async def _save_company_record(self, company: dict, workflow_run_id: str):
+        try:
+            from database.models import AsyncSessionLocal, Company
+            async with AsyncSessionLocal() as db:
+                db_company = Company(
+                    id=uuid.UUID(company["company_id"]) if company.get("company_id") else uuid.uuid4(),
+                    workflow_run_id=uuid.UUID(workflow_run_id) if workflow_run_id else None,
+                    name=company.get("name"),
+                    domain=company.get("domain"),
+                    website=company.get("website"),
+                    industry=company.get("industry"),
+                    employee_count=company.get("employee_count"),
+                    revenue_estimate=company.get("revenue_estimate"),
+                    headquarters=company.get("headquarters"),
+                    funding_total=company.get("funding_total"),
+                    recent_funding=company.get("recent_funding"),
+                    tech_stack=company.get("tech_stack"),
+                    hiring_trends=company.get("hiring_trends"),
+                    growth_signals=company.get("growth_signals"),
+                    recent_news=company.get("recent_news"),
+                    social_presence=company.get("social_presence"),
+                    confidence_score=company.get("confidence_score"),
+                    validation_status=company.get("validation_status", "enriched"),
+                    icp_match_score=company.get("icp_match_score"),
+                    trigger_reason=company.get("trigger_detail"),
+                    status="enriched",
+                    enriched_at=datetime.now(timezone.utc),
+                )
+                db.add(db_company)
+                await db.commit()
+        except Exception as e:
+            print(f"[{self.agent_name}] Company save failed for {company.get('name')}: {e}")
         return None
 
     async def _cache_company(self, domain: str, enriched_data: dict):

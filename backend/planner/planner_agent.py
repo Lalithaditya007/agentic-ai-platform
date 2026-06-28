@@ -62,6 +62,11 @@ def _build_minimal_fallback_dag(icp_config: dict) -> dict:
                         "search.web_search",
                         "search.news_search",
                         "business_intelligence.company_lookup",
+                        "company_data.apollo_search",
+                        "company_data.opencorporates_search",
+                        "company_data.companies_house_search",
+                        "company_data.sec_edgar_search",
+                        "company_data.wikidata_search",
                     ],
                     "model": "gemini-1.5-flash",
                     "priority": 5,
@@ -108,6 +113,149 @@ def _build_minimal_fallback_dag(icp_config: dict) -> dict:
                 "condition": "confidence_score < 0.5",
                 "trigger_at": "brief_001",
                 "reason": "Low confidence — human review required",
+            }
+        ],
+        "cost_estimate_usd": 0.03,
+    }
+
+
+def _build_free_tier_fallback_dag(icp_config: dict) -> dict:
+    """
+    Full free-tier fallback DAG when LLM planning is unavailable.
+    This keeps the platform aligned with the Project 1 workflow even when
+    provider-backed planning is down or rate-limited.
+    """
+    industry = icp_config.get("industry", ["unknown"])[0] if icp_config.get("industry") else "unknown"
+    return {
+        "strategy_name": f"Free-Tier Fallback DAG ({industry})",
+        "rationale": (
+            "LLM planning unavailable - using deterministic free-tier fallback "
+            "workflow covering trigger monitoring, discovery, validation, enrichment, "
+            "contact discovery, next best action, and brief generation."
+        ),
+        "dag": {
+            "nodes": [
+                {
+                    "task_id": "trigger_001",
+                    "agent_template": "trigger_monitoring",
+                    "goal": f"Monitor buying signals relevant to the {industry} ICP.",
+                    "required_capabilities": [
+                        "search.news_search",
+                        "search.rss_monitoring",
+                        "search.web_search",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 5,
+                    "timeout_seconds": 90,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "discovery_001",
+                    "agent_template": "company_discovery",
+                    "goal": f"Find companies matching this ICP in the {industry} sector using free data sources.",
+                    "required_capabilities": [
+                        "search.web_search",
+                        "search.news_search",
+                        "business_intelligence.company_lookup",
+                        "company_data.apollo_search",
+                        "company_data.opencorporates_search",
+                        "company_data.companies_house_search",
+                        "company_data.sec_edgar_search",
+                        "company_data.wikidata_search",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 5,
+                    "timeout_seconds": 180,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "validation_001",
+                    "agent_template": "company_validation",
+                    "goal": "Validate discovered companies against ICP rules and deduplicate.",
+                    "required_capabilities": [
+                        "business_intelligence.company_lookup",
+                        "storage.postgresql",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 4,
+                    "timeout_seconds": 60,
+                    "retry_on_failure": False,
+                },
+                {
+                    "task_id": "enrichment_001",
+                    "agent_template": "company_enrichment",
+                    "goal": "Enrich validated companies with company profile, funding, hiring, and recent news.",
+                    "required_capabilities": [
+                        "search.news_search",
+                        "business_intelligence.company_lookup",
+                        "business_intelligence.funding_lookup",
+                        "business_intelligence.hiring_analysis",
+                        "storage.postgresql",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 4,
+                    "timeout_seconds": 180,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "contacts_001",
+                    "agent_template": "contact_discovery",
+                    "goal": "Discover and enrich ICP-relevant decision makers for each qualified company.",
+                    "required_capabilities": [
+                        "contact_intelligence.email_lookup",
+                        "contact_intelligence.linkedin_lookup",
+                        "business_intelligence.company_lookup",
+                        "storage.postgresql",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 4,
+                    "timeout_seconds": 180,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "nba_001",
+                    "agent_template": "next_best_action",
+                    "goal": "Recommend next best actions for each qualified company.",
+                    "required_capabilities": [
+                        "storage.postgresql",
+                    ],
+                    "model": "free-tier-fallback",
+                    "priority": 4,
+                    "timeout_seconds": 120,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "brief_001",
+                    "agent_template": "business_brief",
+                    "goal": "Generate intelligence brief for qualified companies with contacts and recommendations.",
+                    "required_capabilities": ["storage.postgresql"],
+                    "model": "free-tier-fallback",
+                    "priority": 5,
+                    "timeout_seconds": 120,
+                    "retry_on_failure": True,
+                },
+            ],
+            "edges": [
+                {"from": "trigger_001", "to": "discovery_001", "condition": "on_signal"},
+                {"from": "discovery_001", "to": "validation_001", "condition": "on_success"},
+                {"from": "validation_001", "to": "enrichment_001", "condition": "on_data"},
+                {"from": "enrichment_001", "to": "contacts_001", "condition": "on_success"},
+                {"from": "enrichment_001", "to": "nba_001", "condition": "on_success"},
+                {"from": "contacts_001", "to": "brief_001", "condition": "on_data"},
+                {"from": "nba_001", "to": "brief_001", "condition": "on_data"},
+            ],
+        },
+        "targets": {
+            "max_companies_to_discover": 10,
+            "max_companies_to_process": 5,
+            "min_icp_match_score": 0.6,
+            "max_runtime_minutes": 20,
+        },
+        "hitl_triggers": [
+            {
+                "condition": "confidence_score < 0.5",
+                "trigger_at": "brief_001",
+                "reason": "Low confidence - human review required",
             }
         ],
         "cost_estimate_usd": 0.03,
@@ -164,7 +312,8 @@ async def planner_node(state: PlatformState) -> dict:
                 .replace("{capability_catalogue}", capability_catalogue)
             )
 
-            result = await invoke_with_retry([HumanMessage(content=filled_prompt)], temperature=0.1, model="google/gemma-2-9b-it:free")
+            from config import get_llm_model
+            result = await invoke_with_retry([HumanMessage(content=filled_prompt)], temperature=0.1, model=get_llm_model("reasoning"))
             raw = result.content if hasattr(result, "content") else str(result)
             strategy = json.loads(_clean_json(raw))
 
@@ -179,10 +328,10 @@ async def planner_node(state: PlatformState) -> dict:
 
         except Exception as e:
             print(f"[PLANNER] LLM planning failed ({e}), using minimal fallback DAG")
-            strategy = _build_minimal_fallback_dag(icp_config)
+            strategy = _build_free_tier_fallback_dag(icp_config)
     else:
         print("[PLANNER] No LLM configured — using minimal fallback DAG")
-        strategy = _build_minimal_fallback_dag(icp_config)
+        strategy = _build_free_tier_fallback_dag(icp_config)
 
     return {
         "execution_strategy": strategy,

@@ -12,7 +12,9 @@ v2 fixes:
 """
 
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from runtime.agents.base_agent import BaseAgent
+from config import get_llm_model
 from config import settings
 
 
@@ -83,7 +85,40 @@ def _get_demo_candidates(icp_config: dict) -> list[dict]:
 
 class TriggerMonitoringAgent(BaseAgent):
     agent_name = "trigger_monitoring"
-    llm_model = "google/gemma-2-9b-it:free"
+    llm_model = get_llm_model()
+
+    def _fallback_candidates_from_articles(self, trigger_signals: list[dict], industry: list[str]) -> list[dict]:
+        candidates = []
+        seen: set[str] = set()
+        target_industry = industry[0] if industry else "B2B"
+
+        for signal in trigger_signals[:8]:
+            article = signal.get("article", {}) or {}
+            title = article.get("title", "")
+            url = article.get("url", "")
+            domain = (urlparse(url).hostname or "").lower()
+            if domain.startswith("www."):
+                domain = domain[4:]
+            if domain.endswith("news.google.com"):
+                domain = ""
+
+            name = title.split(" - ")[0].split(" | ")[0].split(":")[0].strip()
+            if not name:
+                continue
+            dedup_key = domain or name.lower()
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            candidates.append({
+                "name": name,
+                "domain": domain,
+                "industry": target_industry,
+                "trigger_source": signal.get("trigger_type", "news_signal"),
+                "trigger_confidence": signal.get("trigger_confidence", 0.55),
+                "trigger_detail": title or "Matched trigger signal from monitored sources",
+            })
+
+        return candidates
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config
@@ -198,7 +233,7 @@ Return JSON array:
                     candidate_companies = result[:5]
             except Exception as e:
                 print(f"[{self.agent_name}] LLM extraction failed: {e}")
-                candidate_companies = []
+                candidate_companies = self._fallback_candidates_from_articles(trigger_signals, industry)
 
         print(f"[{self.agent_name}] {len(trigger_signals)} signals → {len(candidate_companies)} candidates")
 

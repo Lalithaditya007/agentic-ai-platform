@@ -37,6 +37,125 @@ def _clean_json_response(raw: str) -> str:
     return cleaned.strip()
 
 
+def _heuristic_business_understanding(description: str) -> dict:
+    """
+    Free-tier fallback when no LLM provider is available.
+    It uses lightweight keyword/rule extraction so the platform remains usable.
+    """
+    text = description.lower()
+
+    industry_map = {
+        "bank": "Banking",
+        "financial": "Financial Services",
+        "cyber": "Cybersecurity",
+        "health": "Healthcare",
+        "hospital": "Healthcare",
+        "manufactur": "Manufacturing",
+        "staff": "Staffing",
+        "energy": "Energy",
+        "saas": "SaaS",
+        "software": "Software",
+    }
+    industry = []
+    for key, value in industry_map.items():
+        if key in text and value not in industry:
+            industry.append(value)
+    if not industry:
+        industry = ["B2B Services"]
+
+    geography = []
+    geo_map = {
+        "north america": "North America",
+        "united states": "US",
+        "usa": "US",
+        "us ": "US",
+        "uk": "UK",
+        "europe": "EU",
+        "eu": "EU",
+        "apac": "APAC",
+        "india": "India",
+    }
+    for key, value in geo_map.items():
+        if key in text and value not in geography:
+            geography.append(value)
+    if not geography:
+        geography = ["US"]
+
+    emp_min = None
+    emp_max = None
+    gte_match = re.search(r"(?:more than|over|at least|minimum of)\s+(\d+)\s+employees", text)
+    range_match = re.search(r"(\d+)\s*(?:to|-)\s*(\d+)\s+employees", text)
+    if range_match:
+        emp_min = int(range_match.group(1))
+        emp_max = int(range_match.group(2))
+    elif gte_match:
+        emp_min = int(gte_match.group(1))
+
+    personas = []
+    if "cyber" in text or "security" in text:
+        personas = [
+            {"title": "Chief Information Security Officer", "seniority": "C-Suite", "department": "Security", "priority": 5},
+            {"title": "Security Manager", "seniority": "Manager", "department": "Security", "priority": 4},
+            {"title": "IT Director", "seniority": "Director", "department": "IT", "priority": 3},
+        ]
+    elif "health" in text or "hospital" in text:
+        personas = [
+            {"title": "Chief Operating Officer", "seniority": "C-Suite", "department": "Operations", "priority": 5},
+            {"title": "Procurement Director", "seniority": "Director", "department": "Procurement", "priority": 4},
+            {"title": "IT Director", "seniority": "Director", "department": "IT", "priority": 3},
+        ]
+    else:
+        personas = [
+            {"title": "VP Operations", "seniority": "VP", "department": "Operations", "priority": 5},
+            {"title": "Director of IT", "seniority": "Director", "department": "IT", "priority": 4},
+            {"title": "Procurement Manager", "seniority": "Manager", "department": "Procurement", "priority": 3},
+        ]
+
+    triggers = []
+    if "expand" in text or "expansion" in text:
+        triggers.append({"type": "expansion", "description": "Recent expansion activity", "weight": 0.8, "enabled": True})
+    if "hiring" in text or "team" in text:
+        triggers.append({"type": "hiring_surge", "description": "Growth in team hiring", "weight": 0.7, "enabled": True})
+    if not triggers:
+        triggers = [{"type": "web_discovery", "description": "General ICP-targeted market discovery", "weight": 0.6, "enabled": True}]
+
+    qualification_rules = []
+    if emp_min:
+        qualification_rules.append({
+            "field": "employee_count",
+            "operator": "gte",
+            "value": emp_min,
+            "description": f"Employee count should be at least {emp_min}",
+        })
+    qualification_rules.append({
+        "field": "industry",
+        "operator": "in",
+        "value": industry[0],
+        "description": f"Target industry is {industry[0]}",
+    })
+
+    return {
+        "industry": industry,
+        "target_market_description": description[:240],
+        "product_or_service": "Derived from business description",
+        "value_proposition": "Heuristically extracted from business description",
+        "icp": {
+            "company_size": {"label": "Enterprise" if (emp_min or 0) >= 500 else "Mid-market"},
+            "revenue_range": None,
+            "geography": geography,
+            "employee_count_min": emp_min,
+            "employee_count_max": emp_max,
+        },
+        "personas": personas,
+        "triggers": triggers,
+        "qualification_rules": qualification_rules,
+        "disqualifiers": [],
+        "constraints": [],
+        "confidence_indicator": 0.62,
+        "confidence_notes": "Generated from heuristic fallback because LLM understanding was unavailable.",
+    }
+
+
 async def understand_business(description: str) -> dict:
     """
     Call the LLM to parse a business description into a structured ICP config.
@@ -52,20 +171,14 @@ async def understand_business(description: str) -> dict:
     # Replace manually to avoid f-string parsing of JSON braces
     filled = prompt_template_text.replace("{business_description}", description)
 
-    result = await invoke_with_retry([HumanMessage(content=filled)], temperature=0.2)
-
-    raw_content = result.content if hasattr(result, "content") else str(result)
-    cleaned = _clean_json_response(raw_content)
-
     try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"LLM returned non-JSON response. Parse error: {e}\n"
-            f"Raw response (first 500 chars): {cleaned[:500]}"
-        )
-
-    return parsed
+        result = await invoke_with_retry([HumanMessage(content=filled)], temperature=0.2)
+        raw_content = result.content if hasattr(result, "content") else str(result)
+        cleaned = _clean_json_response(raw_content)
+        return json.loads(cleaned)
+    except Exception as e:
+        print(f"[BUSINESS_UNDERSTANDING] Falling back to heuristic parser: {e}")
+        return _heuristic_business_understanding(description)
 
 
 def extract_icp_fields(parsed: dict) -> dict:

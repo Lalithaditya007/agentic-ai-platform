@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, Integer, Float, Boolean, TIMESTAMP, JSON
+from sqlalchemy import Column, String, Text, Integer, Float, Boolean, TIMESTAMP, JSON, inspect, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 import uuid
@@ -44,6 +44,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), index=True, nullable=True) # UUID from Supabase Auth
     name = Column(String(255), nullable=False)
     business_description = Column(Text, nullable=False)
     status = Column(String(50), default="draft")       # draft, active, paused, archived
@@ -69,6 +70,10 @@ class ICPConfiguration(Base):
     disqualifiers = Column(JSON)
     constraints = Column(JSON)
     confidence_indicator = Column(Float)
+    target_market_description = Column(Text)
+    product_or_service = Column(Text)
+    value_proposition = Column(Text)
+    confidence_notes = Column(Text)
     confirmed_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -77,6 +82,7 @@ class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), index=True, nullable=True) # UUID from Supabase Auth
     project_id = Column(PG_UUID(as_uuid=True), nullable=False)
     icp_config_id = Column(PG_UUID(as_uuid=True))
     status = Column(String(50), default="pending")     # pending, running, paused_hitl, completed, failed
@@ -140,6 +146,7 @@ class BusinessBrief(Base):
     __tablename__ = "business_briefs"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), index=True, nullable=True) # UUID from Supabase Auth
     workflow_run_id = Column(PG_UUID(as_uuid=True), nullable=False)
     company_id = Column(PG_UUID(as_uuid=True), nullable=False)
     company_name = Column(String(255))
@@ -196,3 +203,31 @@ class AnalyticsEvent(Base):
 async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_icp_context_columns(conn)
+
+
+async def _ensure_icp_context_columns(conn):
+    """Backfill optional ICP context columns for existing databases."""
+    existing_columns = await conn.run_sync(
+        lambda sync_conn: {
+            col["name"]
+            for col in inspect(sync_conn).get_columns("icp_configurations")
+        }
+    )
+
+    missing_columns = {
+        "target_market_description": "TEXT",
+        "product_or_service": "TEXT",
+        "value_proposition": "TEXT",
+        "confidence_notes": "TEXT",
+    }
+
+    for column_name, column_type in missing_columns.items():
+        if column_name in existing_columns:
+            continue
+        await conn.execute(
+            text(
+                f"ALTER TABLE icp_configurations "
+                f"ADD COLUMN {column_name} {column_type}"
+            )
+        )
