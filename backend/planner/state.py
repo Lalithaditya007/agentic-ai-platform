@@ -32,8 +32,9 @@ class PlatformState(TypedDict):
     icp_config: dict           # Full ICP configuration dict
 
     # ── Planner Outputs ───────────────────────────────────────────────────────
-    execution_strategy: Optional[dict]    # Strategy from Planner node
+    execution_strategy: Optional[dict]    # Strategy from Planner node (contains full DAG)
     agent_specs: List[dict]               # Specs from Agent Architect node
+    dag_edges: List[dict]                 # DAG edges [{from, to, condition}] for dynamic executor
 
     # ── Discovery Pipeline ────────────────────────────────────────────────────
     trigger_signals: List[dict]           # Buying signals from Trigger Monitor
@@ -54,6 +55,7 @@ class PlatformState(TypedDict):
     hitl_trigger_reason: str
     hitl_pending_brief_id: Optional[str]
     hitl_action: Optional[str]            # approve | reject | modify | request_research
+    hitl_action_details: Optional[dict]   # Contains research_query if requested
 
     # ── Memory / Deduplication ───────────────────────────────────────────────
     memory_hits: int                      # Companies served from cache

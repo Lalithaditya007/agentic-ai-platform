@@ -50,3 +50,46 @@ plugins:
     module: "capabilities.builtin.postgres_storage"
     class: "PostgreSQLStoragePlugin"
     enabled: true
+
+  # ── Custom Plugins (Plugin SDK — Section 16) ──────────────────────────────
+  # These live in capabilities/plugins/ (not builtin/).
+  # Add new plugins here without modifying any core platform code.
+
+  - id: "business_intelligence.opencorporates_lookup"
+    module: "capabilities.plugins.opencorporates_lookup"
+    class: "OpenCorporatesLookupPlugin"
+    enabled: false   # requires API key — disabled by default
+
+  - id: "business_intelligence.company_profile_enrichment"
+    module: "capabilities.plugins.company_profile_enrichment"
+    class: "CompanyProfileEnrichmentPlugin"
+    enabled: true    # Free Wikipedia API — no key required
+
+  # ── New Company Discovery Sources ─────────────────────────────────────────
+  # Added to solve the "same companies for every business" problem.
+  # These are queried by company_discovery.py in multi-pass ICP-grounded search.
+
+  - id: "company_data.apollo_search"
+    module: "capabilities.builtin.apollo_search"
+    class: "ApolloCompanySearchPlugin"
+    enabled: true   # Health check gates on APOLLO_API_KEY
+
+  - id: "company_data.opencorporates_search"
+    module: "capabilities.builtin.opencorporates_search"
+    class: "OpenCorporatesSearchPlugin"
+    enabled: true   # Free without key — 500 req/day; OPENCORPORATES_API_KEY for more
+
+  - id: "company_data.companies_house_search"
+    module: "capabilities.builtin.companies_house_search"
+    class: "CompaniesHouseSearchPlugin"
+    enabled: true   # Free UK registry — no key required
+
+  - id: "company_data.sec_edgar_search"
+    module: "capabilities.builtin.sec_edgar_search"
+    class: "SecEdgarSearchPlugin"
+    enabled: true   # Free US EDGAR — no key required
+
+  - id: "company_data.wikidata_search"
+    module: "capabilities.builtin.wikidata_search"
+    class: "WikidataCompanySearchPlugin"
+    enabled: true   # Free Wikidata SPARQL — no key required, 1M+ global companies

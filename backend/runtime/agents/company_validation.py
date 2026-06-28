@@ -10,6 +10,7 @@ from runtime.agents.base_agent import BaseAgent
 
 class CompanyValidationAgent(BaseAgent):
     agent_name = "company_validation"
+    llm_model = "google/gemma-2-9b-it:free"
     MIN_CONFIDENCE = 0.35
 
     async def run(self, state: dict) -> dict:

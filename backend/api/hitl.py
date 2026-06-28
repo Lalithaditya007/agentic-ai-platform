@@ -50,16 +50,68 @@ async def resume_workflow(run_id: str, action: str, details: dict):
 
 
 @router.get("/hitl/queue")
-async def get_hitl_queue():
-    """Get all briefs waiting for human review."""
+async def get_hitl_queue(project_id: str = None):
+    """
+    Get briefs waiting for human review.
+
+    - If project_id is given: returns ONLY briefs from that project's most
+      recent workflow run. This prevents old runs from other projects polluting
+      the queue.
+    - If no project_id: returns all pending briefs (admin/fallback view).
+    """
     async with AsyncSessionLocal() as db:
+
+        if project_id:
+            try:
+                pid = uuid.UUID(project_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid project_id UUID")
+
+            # Get the most recent workflow run for this project
+            run_res = await db.execute(
+                select(WorkflowRun)
+                .where(WorkflowRun.project_id == pid)
+                .order_by(WorkflowRun.started_at.desc())
+                .limit(1)
+            )
+            run = run_res.scalar_one_or_none()
+
+            if not run:
+                return {"queue": [], "run_id": None, "run_status": None}
+
+            # Return only briefs from this specific run
+            result = await db.execute(
+                select(BusinessBrief)
+                .where(
+                    BusinessBrief.workflow_run_id == run.id,
+                    BusinessBrief.hitl_status.in_(["pending_review", "pending_research"]),
+                )
+                .order_by(BusinessBrief.created_at.desc())
+            )
+            briefs = result.scalars().all()
+
+            return {
+                "queue": [
+                    {
+                        "id": str(b.id),
+                        "company_name": b.company_name,
+                        "status": b.hitl_status,
+                        "overall_confidence": b.overall_confidence,
+                        "created_at": b.created_at,
+                    }
+                    for b in briefs
+                ],
+                "run_id": str(run.id),
+                "run_status": run.status,
+            }
+
+        # No project_id — return all pending (admin view)
         result = await db.execute(
             select(BusinessBrief)
             .where(BusinessBrief.hitl_status.in_(["pending_review", "pending_research"]))
             .order_by(BusinessBrief.created_at.desc())
         )
         briefs = result.scalars().all()
-        
         return {
             "queue": [
                 {
@@ -67,8 +119,9 @@ async def get_hitl_queue():
                     "company_name": b.company_name,
                     "status": b.hitl_status,
                     "overall_confidence": b.overall_confidence,
-                    "created_at": b.created_at
-                } for b in briefs
+                    "created_at": b.created_at,
+                }
+                for b in briefs
             ]
         }
 

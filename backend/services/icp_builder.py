@@ -87,7 +87,7 @@ async def get_latest_icp(project_id: UUID) -> ICPConfiguration | None:
             .where(ICPConfiguration.project_id == project_id)
             .order_by(ICPConfiguration.version.desc())
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
 
 async def get_confirmed_icp(project_id: UUID) -> ICPConfiguration | None:
@@ -104,4 +104,4 @@ async def get_confirmed_icp(project_id: UUID) -> ICPConfiguration | None:
             )
             .order_by(ICPConfiguration.version.desc())
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()

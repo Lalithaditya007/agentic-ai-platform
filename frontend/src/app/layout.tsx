@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Link from "next/link";
-import { Activity, LayoutDashboard, Settings, UserCheck } from "lucide-react";
+import { Activity, LayoutDashboard, Settings, UserCheck, GitBranch } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Universal Agentic AI Platform",

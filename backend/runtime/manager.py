@@ -1,8 +1,14 @@
 """
-Runtime Agent Manager
-======================
-Instantiates agent classes from specs, injects capabilities, and runs them.
-Enforces the capability allowlist — agents cannot access out-of-spec capabilities.
+Runtime Agent Manager  (Agentic Upgrade)
+=========================================
+Instantiates agents from specs, injects capabilities, and runs them.
+
+Key change from v1:
+  - _get_agent_registry() still maps known template names → named classes
+  - NEW: if template is NOT in the registry, fall back to DynamicAgent
+  - This means the Planner can invent ANY new agent type and the Manager
+    will run it via DynamicAgent without any code changes
+  - Enforces capability allowlist — agents cannot use caps outside their spec
 """
 
 import asyncio
@@ -14,8 +20,9 @@ from capabilities.registry import capability_registry
 from planner.state import PlatformState
 
 
-# ── Agent Template Registry ─────────────────────────────────────────────────
-# Maps template names to agent classes (lazy import to avoid circular imports)
+# ── Named Agent Template Registry ───────────────────────────────────────────
+# Maps known template names → dedicated agent classes.
+# If a template is NOT here, DynamicAgent handles it automatically.
 
 def _get_agent_registry() -> dict[str, Type[BaseAgent]]:
     from runtime.agents.trigger_monitoring import TriggerMonitoringAgent
@@ -34,25 +41,34 @@ def _get_agent_registry() -> dict[str, Type[BaseAgent]]:
         "contact_discovery": ContactDiscoveryAgent,
         "next_best_action": NextBestActionAgent,
         "business_brief": BusinessBriefAgent,
+        # DynamicAgent is NOT listed here — it's the implicit fallback
     }
 
 
 def instantiate_agent(spec: dict, icp_config: dict) -> BaseAgent:
     """
     Create a runtime agent from a spec, injecting only allowlisted capabilities.
+
+    Resolution order:
+      1. Check named registry → use dedicated class (full domain logic)
+      2. Not found → use DynamicAgent (goal-driven, LLM-only execution)
     """
     registry = _get_agent_registry()
     template = spec.get("template", "")
     agent_class = registry.get(template)
-    if not agent_class:
-        raise ValueError(f"Unknown agent template: '{template}'")
 
-    # Resolve only the allowlisted capabilities
+    if not agent_class:
+        # ── Agentic Fallback: DynamicAgent handles unknown templates ──────
+        from runtime.agents.dynamic_agent import DynamicAgent
+        print(f"[MANAGER] Template '{template}' not in registry — routing to DynamicAgent")
+        agent_class = DynamicAgent
+
+    # Resolve only the allowlisted capabilities (enforces least-privilege)
     allowed_caps = spec.get("required_capabilities", [])
     resolved_caps = capability_registry.resolve(allowed_caps)
     unavailable = set(allowed_caps) - set(resolved_caps.keys())
     if unavailable:
-        print(f"[MANAGER] WARN: Capabilities unavailable for {spec['agent_id']}: {unavailable}")
+        print(f"[MANAGER] WARN: Unavailable caps for {spec['agent_id']}: {unavailable}")
 
     return agent_class(
         icp_config=icp_config,
@@ -71,6 +87,8 @@ async def run_phase(phase_specs: list[dict], state: dict, icp_config: dict) -> d
     """
     Run a group of agents in the execution mode specified (sequential or parallel).
     Merges all state update dicts and returns combined result.
+    Kept for backward compatibility — the dag_executor in workflow_graph.py
+    handles the primary execution path now.
     """
     if not phase_specs:
         return {}
@@ -79,7 +97,6 @@ async def run_phase(phase_specs: list[dict], state: dict, icp_config: dict) -> d
     combined: dict = {}
 
     if execution_mode == "parallel":
-        # Run all agents in parallel, merge results
         tasks = [run_agent_from_spec(spec, state, icp_config) for spec in phase_specs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for spec, result in zip(phase_specs, results):
@@ -88,11 +105,9 @@ async def run_phase(phase_specs: list[dict], state: dict, icp_config: dict) -> d
             else:
                 combined = _merge_state_updates(combined, result)
     else:
-        # Run sequentially
         for spec in phase_specs:
             result = await run_agent_from_spec(spec, state, icp_config)
             combined = _merge_state_updates(combined, result)
-            # Update state with intermediate results for next agent
             state = {**state, **result}
 
     return combined

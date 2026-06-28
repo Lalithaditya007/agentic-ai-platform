@@ -2,7 +2,7 @@
 Business Understanding AI Service
 ==================================
 Takes a free-form business description and outputs a structured ICP configuration
-using a Gemini LLM chain. This is Phase 2.1 of the implementation plan.
+using an LLM chain (Groq → Google Gemini → OpenAI fallback chain).
 
 Input:  business_description (string)
 Output: Structured ICP dict (matches ICPConfiguration model fields)
@@ -14,10 +14,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
 
 from config import settings
+from runtime.agents.base_agent import invoke_with_retry
 
 
 # ── Load prompt template ──────────────────────────────────────────────────────
@@ -27,35 +27,6 @@ PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 def _load_prompt(filename: str) -> str:
     path = PROMPTS_DIR / filename
     return path.read_text(encoding="utf-8")
-
-
-def _get_llm():
-    """Return the configured LLM client."""
-    if settings.LLM_PROVIDER == "groq" and settings.GROQ_API_KEY:
-        from langchain_groq import ChatGroq
-        return ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.2,
-            groq_api_key=settings.GROQ_API_KEY,
-        )
-    elif settings.LLM_PROVIDER == "google" and settings.GOOGLE_API_KEY:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            temperature=0.2,
-            google_api_key=settings.GOOGLE_API_KEY,
-        )
-    elif settings.OPENAI_API_KEY:
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.2,
-            openai_api_key=settings.OPENAI_API_KEY,
-        )
-    else:
-        raise RuntimeError(
-            "No LLM configured. Set GOOGLE_API_KEY or OPENAI_API_KEY in .env"
-        )
 
 
 def _clean_json_response(raw: str) -> str:
@@ -81,8 +52,7 @@ async def understand_business(description: str) -> dict:
     # Replace manually to avoid f-string parsing of JSON braces
     filled = prompt_template_text.replace("{business_description}", description)
 
-    llm = _get_llm()
-    result = await llm.ainvoke([HumanMessage(content=filled)])
+    result = await invoke_with_retry([HumanMessage(content=filled)], temperature=0.2)
 
     raw_content = result.content if hasattr(result, "content") else str(result)
     cleaned = _clean_json_response(raw_content)

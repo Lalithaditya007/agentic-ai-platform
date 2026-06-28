@@ -1,6 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import sys
+
+# Force UTF-8 encoding for Windows terminal to prevent print() crashes
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 from config import settings
 from database.models import create_tables
@@ -20,6 +25,7 @@ async def lifespan(app: FastAPI):
         print("[OK] Capabilities loaded successfully")
     except Exception as e:
         print(f"[WARN] Failed to load capabilities: {e}")
+
 
     # Initialize database tables
     try:
@@ -65,14 +71,15 @@ app.add_middleware(
 )
 
 # ── Register API routers ───────────────────────────────────
-from api import projects, icp, workflows, hitl, analytics, ws
+from api import projects, icp, workflows, hitl, analytics, ws, dag_preview
 
-app.include_router(projects.router, prefix="/api", tags=["Projects"])
-app.include_router(icp.router,      prefix="/api", tags=["ICP"])
-app.include_router(workflows.router, prefix="/api", tags=["Workflows"])
-app.include_router(hitl.router,     prefix="/api", tags=["HITL"])
-app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
-app.include_router(ws.router,       tags=["WebSocket"])
+app.include_router(projects.router,    prefix="/api", tags=["Projects"])
+app.include_router(icp.router,         prefix="/api", tags=["ICP"])
+app.include_router(workflows.router,   prefix="/api", tags=["Workflows"])
+app.include_router(hitl.router,        prefix="/api", tags=["HITL"])
+app.include_router(analytics.router,   prefix="/api", tags=["Analytics"])
+app.include_router(dag_preview.router, prefix="/api", tags=["DAG"])
+app.include_router(ws.router,          tags=["WebSocket"])
 
 
 @app.get("/", tags=["Health"])

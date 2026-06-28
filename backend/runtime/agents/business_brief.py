@@ -25,6 +25,7 @@ from runtime.agents.base_agent import BaseAgent
 
 class BusinessBriefAgent(BaseAgent):
     agent_name = "business_brief"
+    llm_model = "google/gemma-2-9b-it:free"
 
     async def run(self, state: dict) -> dict:
         enriched_companies = state.get("enriched_companies", [])

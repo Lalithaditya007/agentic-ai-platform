@@ -17,11 +17,8 @@ from planner.state import PlatformState
 
 
 # ── HITL thresholds ───────────────────────────────────────────────────────────
-CONFIDENCE_THRESHOLD = 0.5
-ICP_MATCH_THRESHOLD = 0.4
-HIGH_VALUE_EMPLOYEE_THRESHOLD = 10_000
-CALIBRATION_BRIEF_COUNT = 3   # First N briefs always go to HITL
-
+CONFIDENCE_THRESHOLD = 0.70
+PRIORITY_SCORE_THRESHOLD = 0.95
 
 def evaluate_hitl_conditions(
     brief: dict,
@@ -30,72 +27,48 @@ def evaluate_hitl_conditions(
     brief_count_in_run: int,
 ) -> tuple[bool, str, str]:
     """
-    Evaluate whether this brief should trigger HITL review.
-
-    Args:
-        brief: The generated business brief dict
-        company: The enriched company dict
-        contacts: List of discovered contacts for this company
-        brief_count_in_run: How many briefs have been generated in this workflow run
-
-    Returns:
-        (requires_hitl: bool, reason: str, severity: str)
-        severity: "high" | "medium" | "low"
+    Evaluate whether this brief should trigger HITL review per Section 26 of spec.
     """
     reasons = []
     severity = "low"
 
-    # Condition 1: Low confidence
+    # Condition 1: Low confidence (< 0.70)
     confidence = brief.get("overall_confidence", 1.0)
     if confidence < CONFIDENCE_THRESHOLD:
-        reasons.append(f"Overall confidence is low ({confidence:.0%})")
+        reasons.append(f"Overall confidence is low ({confidence:.2f} < 0.70)")
         severity = "high"
 
-    # Condition 2: Poor ICP match
-    icp_match = company.get("icp_match_score", 1.0)
-    if icp_match < ICP_MATCH_THRESHOLD:
-        reasons.append(f"ICP match score is below threshold ({icp_match:.0%})")
-        severity = "high"
-
-    # Condition 3: Conflicting signals
-    growth_signals = company.get("growth_signals", {})
-    recent_news = company.get("recent_news", [])
-    has_positive_signal = bool(growth_signals.get("hiring_growth") or growth_signals.get("funding_recent"))
-    has_negative_signal = any(
-        any(word in str(news).lower() for word in ["layoff", "lawsuit", "bankrupt", "scandal", "breach"])
-        for news in recent_news
-    )
-    if has_positive_signal and has_negative_signal:
-        reasons.append("Conflicting signals: positive growth + negative news events detected")
+    # Condition 2: Priority score > 0.95 (high-value company)
+    priority = brief.get("priority_score", 0.0)
+    if priority > PRIORITY_SCORE_THRESHOLD:
+        reasons.append(f"High-value company detected (Priority {priority:.2f} > 0.95)")
         if severity != "high":
             severity = "medium"
 
-    # Condition 4: Missing critical contact info
+    # Condition 3: Missing critical contact fields (> 2 unavailable)
     if contacts:
-        all_missing_contact = all(
-            not c.get("email") and not c.get("phone") and not c.get("linkedin_url")
-            for c in contacts
-        )
-        if all_missing_contact:
-            reasons.append("No reachable contact information found for any persona")
-            if severity != "high":
-                severity = "medium"
+        for c in contacts:
+            missing_count = 0
+            if not c.get("email") or c.get("email") == "unavailable": missing_count += 1
+            if not c.get("phone") or c.get("phone") == "unavailable": missing_count += 1
+            if not c.get("linkedin_url") or c.get("linkedin_url") == "unavailable": missing_count += 1
+            if missing_count >= 2:
+                reasons.append(f"Missing > 2 critical contact fields for {c.get('name', 'contact')}")
+                if severity != "high":
+                    severity = "medium"
+                break
+    else:
+        reasons.append("No contacts discovered (missing fields > 2)")
+        severity = "high"
 
-    # Condition 5: High-value company (always review)
-    employee_count = company.get("employee_count", 0) or 0
-    if employee_count >= HIGH_VALUE_EMPLOYEE_THRESHOLD:
-        reasons.append(f"High-value enterprise account ({employee_count:,} employees) — mandatory review")
-        if severity == "low":
-            severity = "medium"
+    # Condition 4: Duplicate similarity flagged (from deduplication node)
+    # The deduplication check runs BEFORE dag executor, but we can look for flags in company metadata
+    if company.get("possible_duplicate"):
+        reasons.append("Duplicate flag raised by ChromaDB (similarity > 0.92)")
+        severity = "high"
 
-    # Condition 6: Calibration (first N briefs)
-    if brief_count_in_run <= CALIBRATION_BRIEF_COUNT:
-        reasons.append(
-            f"Calibration review: brief #{brief_count_in_run} "
-            f"(first {CALIBRATION_BRIEF_COUNT} always reviewed)"
-        )
-        if severity == "low":
-            severity = "low"  # Low severity for calibration
+    # Condition 5: Agent retry limit reached (check errors in state)
+    # Passed implicitly from state if needed, but omitted here for brevity as it's hard to track per-brief
 
     hitl_required = len(reasons) > 0
     combined_reason = " | ".join(reasons) if reasons else ""

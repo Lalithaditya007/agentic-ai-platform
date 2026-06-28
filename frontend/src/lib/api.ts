@@ -41,6 +41,16 @@ export const apiService = {
   getWorkflowStatus: (runId: string) => 
     api.get(`/workflows/${runId}`),
 
+  getWorkflowGraph: (runId: string) =>
+    api.get(`/workflows/${runId}/graph`),
+
+  // DAG Preview
+  generateDagPreview: (projectId: string) =>
+    api.post(`/projects/${projectId}/dag-preview`),
+
+  getDagPreview: (projectId: string) =>
+    api.get(`/projects/${projectId}/dag-preview`),
+
   // HITL
   getHitlQueue: () => 
     api.get('/hitl/queue'),

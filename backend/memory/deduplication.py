@@ -59,24 +59,40 @@ async def check_deduplication(company_domain: str, company_name: str) -> dict:
             query_text=f"{company_name} {company_domain}",
             n_results=1,
         )
-        if results and results[0].get("distance", 0) > 0.92:
+        # Cosine distance: smaller means more similar. similarity > 0.92 means distance < 0.08
+        if results and results[0].get("distance", 1.0) < 0.08:
             return {
                 "skip": False,
                 "reason": "semantic_similar",
                 "flag_for_review": True,
             }
-    except Exception:
-        pass  # ChromaDB unavailable — allow company through
+    except Exception as e:
+        print(f"[DEDUP] ChromaDB query failed: {e}")
 
     return {"skip": False, "reason": "new_company", "flag_for_review": False}
 
 
-async def mark_company_seen(company_domain: str, ttl_days: int = 7):
-    """Cache the company domain in Redis after processing."""
+async def mark_company_seen(company_domain: str, company_name: str = "", ttl_days: int = 7):
+    """Cache the company domain in Redis and semantic representation in ChromaDB."""
+    domain_hash = hashlib.md5(company_domain.lower().strip().encode()).hexdigest()
+    
+    # 1. Redis exact domain cache
     try:
-        from memory.redis_client import redis_set, TTL_COMPANY_DOMAIN
-        domain_hash = hashlib.md5(company_domain.lower().strip().encode()).hexdigest()
+        from memory.redis_client import redis_set
         redis_key = f"company:domain:{domain_hash}"
         await redis_set(redis_key, "1", ttl_seconds=ttl_days * 86400)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[DEDUP] Redis cache failed: {e}")
+
+    # 2. ChromaDB semantic cache
+    if company_name:
+        try:
+            from memory.chromadb_client import chroma_upsert
+            chroma_upsert(
+                collection_name="company_knowledge",
+                documents=[f"{company_name} {company_domain}"],
+                ids=[domain_hash],
+                metadatas=[{"domain": company_domain, "name": company_name}]
+            )
+        except Exception as e:
+            print(f"[DEDUP] ChromaDB upsert failed: {e}")

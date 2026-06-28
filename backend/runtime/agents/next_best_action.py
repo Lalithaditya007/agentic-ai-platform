@@ -19,6 +19,7 @@ from runtime.agents.base_agent import BaseAgent
 
 class NextBestActionAgent(BaseAgent):
     agent_name = "next_best_action"
+    llm_model = "deepseek/deepseek-r1:free"
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config

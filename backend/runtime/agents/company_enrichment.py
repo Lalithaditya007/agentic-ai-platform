@@ -33,6 +33,7 @@ ENRICHMENT_SCHEMA = """{
 
 class CompanyEnrichmentAgent(BaseAgent):
     agent_name = "company_enrichment"
+    llm_model = "google/gemma-2-9b-it:free"
 
     async def run(self, state: dict) -> dict:
         validated = state.get("validated_companies", [])

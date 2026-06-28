@@ -26,6 +26,7 @@ CONTACT_SCHEMA = """{
 
 class ContactDiscoveryAgent(BaseAgent):
     agent_name = "contact_discovery"
+    llm_model = "google/gemma-2-9b-it:free"
 
     async def run(self, state: dict) -> dict:
         icp_config = self.icp_config

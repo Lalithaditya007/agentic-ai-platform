@@ -39,8 +39,9 @@ export default function IcpReviewPage() {
     try {
       setIsStarting(true);
       await apiService.confirmIcp(projectId);
-      await apiService.runWorkflow(projectId);
-      router.push(`/hitl?project=${projectId}`);
+      // Navigate to DAG visualization — user sees their unique agent graph
+      // The DAG page will trigger the workflow run after the user reviews
+      router.push(`/project/${projectId}/dag`);
     } catch (err) {
       console.error(err);
       setIsStarting(false);

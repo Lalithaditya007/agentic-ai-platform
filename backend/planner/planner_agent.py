@@ -1,16 +1,17 @@
 """
-Planner Agent Node
-===================
-The Planner is the first node in the LangGraph pipeline.
-It reads the ICP config and uses an LLM to build an execution strategy
-that tells all subsequent nodes what to do, in what order, and with what models.
+Planner Agent Node  (Agentic Upgrade)
+=======================================
+The Planner is the brain of the platform. It reads the ICP config + the live
+capability catalogue and uses an LLM to build a CUSTOM Directed Acyclic Graph
+(DAG) of agent tasks for THIS specific business.
 
-Responsibilities:
-1. Read ICP config from state
-2. Consult memory for any prior context on this project
-3. Build execution strategy (which agents, parallel vs sequential)
-4. Select LLM per task (cost optimization)
-5. Determine upfront HITL intervention points
+Key changes from the old static version:
+  - No more _build_default_strategy() hardcoded 5-step pipeline
+  - LLM receives the REAL capability catalogue (from registry) so it knows
+    exactly what tools are available when designing the DAG
+  - Output is a DAG {nodes, edges} — not a flat phase list
+  - Fallback is a minimal 3-node DAG, not the same hardcoded pipeline
+  - Every business gets a different graph
 """
 
 import json
@@ -22,6 +23,7 @@ from langchain_core.messages import HumanMessage
 
 from planner.state import PlatformState
 from config import settings
+from runtime.agents.base_agent import invoke_with_retry, get_primary_llm
 
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -32,28 +34,6 @@ def _load_prompt(filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _get_llm():
-    """Get LLM for planning — always uses the most capable available model."""
-    if settings.LLM_PROVIDER == "groq" and settings.GROQ_API_KEY:
-        from langchain_groq import ChatGroq
-        return ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.1,
-            groq_api_key=settings.GROQ_API_KEY,
-        )
-    elif settings.LLM_PROVIDER == "google" and settings.GOOGLE_API_KEY:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            temperature=0.1,
-            google_api_key=settings.GOOGLE_API_KEY,
-        )
-    elif settings.OPENAI_API_KEY:
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
-    else:
-        return None
-
 
 def _clean_json(raw: str) -> str:
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
@@ -61,144 +41,153 @@ def _clean_json(raw: str) -> str:
     return cleaned.strip()
 
 
-def _build_default_strategy(icp_config: dict) -> dict:
+def _build_minimal_fallback_dag(icp_config: dict) -> dict:
     """
-    Fallback strategy when LLM is unavailable.
-    Runs all agents sequentially with sensible defaults.
+    Minimal 3-node fallback DAG when LLM is unavailable.
+    This is intentionally DIFFERENT from the old hardcoded 5-step pipeline —
+    it's just enough to prove the system works, not a fixed workflow.
+    The Planner should always use LLM when available.
     """
-    triggers_enabled = any(
-        t.get("enabled", False)
-        for t in icp_config.get("triggers", [])
-    )
-
-    phases = []
-    if triggers_enabled:
-        phases.append({
-            "phase": 1,
-            "phase_name": "Signal Detection",
-            "agents": ["trigger_monitoring"],
-            "execution_mode": "sequential",
-            "llm_model": "gemini-1.5-flash",
-            "priority": 5,
-            "timeout_seconds": 60,
-            "retry_on_failure": True,
-        })
-
-    phases += [
-        {
-            "phase": 2,
-            "phase_name": "Company Discovery",
-            "agents": ["company_discovery"],
-            "execution_mode": "sequential",
-            "llm_model": "gemini-1.5-flash",
-            "priority": 5,
-            "timeout_seconds": 120,
-            "retry_on_failure": True,
-        },
-        {
-            "phase": 3,
-            "phase_name": "Validation & Deduplication",
-            "agents": ["company_validation"],
-            "execution_mode": "sequential",
-            "llm_model": "gemini-1.5-flash",
-            "priority": 4,
-            "timeout_seconds": 60,
-            "retry_on_failure": False,
-        },
-        {
-            "phase": 4,
-            "phase_name": "Enrichment & Contact Discovery",
-            "agents": ["company_enrichment", "contact_discovery"],
-            "execution_mode": "parallel",
-            "llm_model": "gemini-1.5-flash",
-            "priority": 4,
-            "timeout_seconds": 180,
-            "retry_on_failure": True,
-        },
-        {
-            "phase": 5,
-            "phase_name": "Intelligence & Brief Generation",
-            "agents": ["next_best_action", "business_brief"],
-            "execution_mode": "sequential",
-            "llm_model": "gemini-1.5-flash",
-            "priority": 5,
-            "timeout_seconds": 120,
-            "retry_on_failure": True,
-        },
-    ]
-
+    industry = icp_config.get("industry", ["unknown"])[0] if icp_config.get("industry") else "unknown"
     return {
-        "strategy_name": "Standard Discovery Pipeline",
-        "rationale": "Default sequential strategy — LLM planning unavailable",
-        "execution_phases": phases,
+        "strategy_name": f"Minimal Fallback DAG ({industry})",
+        "rationale": "LLM unavailable — minimal fallback. Run with LLM for business-specific planning.",
+        "dag": {
+            "nodes": [
+                {
+                    "task_id": "discovery_001",
+                    "agent_template": "company_discovery",
+                    "goal": f"Find companies matching this ICP in the {industry} sector using web search.",
+                    "required_capabilities": [
+                        "search.web_search",
+                        "search.news_search",
+                        "business_intelligence.company_lookup",
+                    ],
+                    "model": "gemini-1.5-flash",
+                    "priority": 5,
+                    "timeout_seconds": 120,
+                    "retry_on_failure": True,
+                },
+                {
+                    "task_id": "validation_001",
+                    "agent_template": "company_validation",
+                    "goal": "Validate discovered companies against ICP rules and deduplicate.",
+                    "required_capabilities": [
+                        "business_intelligence.company_lookup",
+                        "storage.postgresql",
+                    ],
+                    "model": "gemini-1.5-flash",
+                    "priority": 4,
+                    "timeout_seconds": 60,
+                    "retry_on_failure": False,
+                },
+                {
+                    "task_id": "brief_001",
+                    "agent_template": "business_brief",
+                    "goal": "Generate intelligence brief for validated companies.",
+                    "required_capabilities": ["storage.postgresql"],
+                    "model": "gemini-1.5-flash",
+                    "priority": 5,
+                    "timeout_seconds": 120,
+                    "retry_on_failure": True,
+                },
+            ],
+            "edges": [
+                {"from": "discovery_001", "to": "validation_001", "condition": "on_success"},
+                {"from": "validation_001", "to": "brief_001", "condition": "on_data"},
+            ],
+        },
         "targets": {
-            "max_companies_to_discover": 20,
-            "max_companies_to_process": 10,
+            "max_companies_to_discover": 10,
+            "max_companies_to_process": 5,
             "min_icp_match_score": 0.6,
-            "max_runtime_minutes": 30,
+            "max_runtime_minutes": 20,
         },
         "hitl_triggers": [
             {
                 "condition": "confidence_score < 0.5",
-                "trigger_at": "business_brief",
+                "trigger_at": "brief_001",
                 "reason": "Low confidence — human review required",
-            },
-            {
-                "condition": "icp_match_score < 0.4",
-                "trigger_at": "company_validation",
-                "reason": "Poor ICP match — human validation needed",
-            },
+            }
         ],
-        "cost_estimate_usd": 0.05,
+        "cost_estimate_usd": 0.03,
     }
 
 
 async def planner_node(state: PlatformState) -> dict:
     """
-    LangGraph node: Planner
-    
-    Reads ICP config, generates an execution strategy, and returns
-    state updates with the strategy and initial agent specs.
+    LangGraph node: Planner (Agentic Upgrade)
+
+    1. Loads the live capability catalogue from registry
+    2. Injects it into the LLM prompt so planning is grounded in real capabilities
+    3. LLM generates a custom DAG for this specific business
+    4. Falls back to minimal 3-node DAG only if LLM is completely unavailable
     """
-    print(f"[PLANNER] Building execution strategy for project {state['project_id']}")
+    print(f"[PLANNER] Building custom DAG for project {state['project_id']}")
 
     icp_config = state.get("icp_config", {})
-    llm = _get_llm()
+    try:
+        llm = get_primary_llm(temperature=0.1)
+    except RuntimeError:
+        llm = None
+
+    # ── Load live capability catalogue ──────────────────────────────────────
+    from capabilities.registry import capability_registry
+    capability_catalogue = capability_registry.get_catalogue_text()
+    print(f"[PLANNER] Injecting {len(capability_registry.list_available())} capabilities into prompt")
 
     strategy = None
 
     if llm:
         try:
-            prompt_template = _load_prompt("planner.txt")
+            # ── Branch: Sub-Graph generation for HITL Research ──────────
+            if state.get("hitl_action") == "request_research":
+                research_query = state.get("hitl_action_details", {}).get("research_query", "Unknown query")
+                print(f"[PLANNER] Generating targeted research sub-graph for: '{research_query}'")
+                prompt_template = _load_prompt("research_planner.txt") if (_load_prompt("research_planner.txt") if (Path(__file__).parent.parent / "prompts" / "research_planner.txt").exists() else False) else _load_prompt("planner.txt") + f"\n\nCRITICAL INSTRUCTION: You are generating a targeted RESEARCH SUB-GRAPH to answer this query: '{research_query}'. Generate a minimal DAG using ONLY the capabilities needed to find this info. Do NOT generate the full pipeline."
+            else:
+                prompt_template = _load_prompt("planner.txt")
+
             business_context = (
                 f"Industry: {icp_config.get('industry', [])}\n"
                 f"Target Market: {icp_config.get('_target_market_description', 'Not specified')}\n"
                 f"Geography: {icp_config.get('geography', [])}\n"
                 f"Personas: {len(icp_config.get('personas', []))} defined\n"
-                f"Triggers Enabled: {sum(1 for t in icp_config.get('triggers', []) if t.get('enabled'))}"
+                f"Triggers Enabled: {sum(1 for t in icp_config.get('triggers', []) if t.get('enabled'))}\n"
+                f"Qualification Rules: {len(icp_config.get('qualification_rules', []))} rules"
             )
 
-            filled_prompt = prompt_template.replace(
-                "{icp_config}", json.dumps(icp_config, indent=2)
-            ).replace(
-                "{business_context}", business_context
+            filled_prompt = (
+                prompt_template
+                .replace("{icp_config}", json.dumps(icp_config, indent=2))
+                .replace("{business_context}", business_context)
+                .replace("{capability_catalogue}", capability_catalogue)
             )
 
-            result = await llm.ainvoke([HumanMessage(content=filled_prompt)])
+            result = await invoke_with_retry([HumanMessage(content=filled_prompt)], temperature=0.1, model="google/gemma-2-9b-it:free")
             raw = result.content if hasattr(result, "content") else str(result)
             strategy = json.loads(_clean_json(raw))
-            print(f"[PLANNER] Strategy generated: {strategy.get('strategy_name', 'unnamed')}")
+
+            # Validate the DAG structure
+            if "dag" not in strategy or "nodes" not in strategy["dag"]:
+                raise ValueError("LLM response missing 'dag.nodes' — invalid DAG structure")
+
+            node_count = len(strategy["dag"].get("nodes", []))
+            edge_count = len(strategy["dag"].get("edges", []))
+            print(f"[PLANNER] DAG generated: '{strategy.get('strategy_name')}' | {node_count} nodes, {edge_count} edges")
+            print(f"[PLANNER] Rationale: {strategy.get('rationale', '')[:150]}")
 
         except Exception as e:
-            print(f"[PLANNER] LLM planning failed ({e}), using default strategy")
-            strategy = _build_default_strategy(icp_config)
+            print(f"[PLANNER] LLM planning failed ({e}), using minimal fallback DAG")
+            strategy = _build_minimal_fallback_dag(icp_config)
     else:
-        print("[PLANNER] No LLM configured — using default strategy")
-        strategy = _build_default_strategy(icp_config)
+        print("[PLANNER] No LLM configured — using minimal fallback DAG")
+        strategy = _build_minimal_fallback_dag(icp_config)
 
     return {
         "execution_strategy": strategy,
-        "agent_specs": [],       # Agent Architect will populate this
+        "agent_specs": [],        # Agent Architect will populate this from the DAG
+        "dag_edges": [],          # Agent Architect will populate this from the DAG
         "trigger_signals": [],
         "candidate_companies": [],
         "validated_companies": [],
@@ -213,7 +202,7 @@ async def planner_node(state: PlatformState) -> dict:
         "memory_hits": 0,
         "duplicates_avoided": 0,
         "agent_metrics": [],
-        "total_cost_estimate": 0.0,
+        "total_cost_estimate": strategy.get("cost_estimate_usd", 0.0),
         "errors": [],
         "warnings": [],
         "current_company_index": 0,
